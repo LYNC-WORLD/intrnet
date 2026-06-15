@@ -1,0 +1,24 @@
+# Dependencies & build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+backend/scripts/
+
+# Logs & OS
+log/
+*.log
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# DAML build artifacts (source is tracked; build output is not)
+**/.daml/
+**/target/

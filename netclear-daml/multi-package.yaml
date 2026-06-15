@@ -1,0 +1,6 @@
+sdk-version: 3.5.2-snapshot.20260514.586.0.v15742f1c
+
+packages:
+  - ./contracts
+  - ./scripts
+  - ./tests

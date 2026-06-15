@@ -1,0 +1,151 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String?
+  partyId      String   @unique
+  ledgerUserId String?  @unique
+  partyToken   String
+  role         String
+  companyName  String
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Obligation {
+  id          String   @id @default(cuid())
+  contractId  String   @unique
+  payer       String
+  receiver    String
+  amount      Decimal  @db.Decimal(20, 8)
+  currency    String
+  description String
+  invoiceRef  String
+  agreementId String
+  status      String
+  createdAt   DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@index([payer])
+  @@index([receiver])
+  @@index([status])
+}
+
+model NettingCycle {
+  id                 String        @id @default(cuid())
+  contractId         String        @unique
+  cycleId            String        @unique
+  operator           String
+  settlementCurrency String
+  status             String
+  cutoffTime         DateTime
+  agreementId        String
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  positions          NetPosition[]
+
+  @@index([cycleId])
+  @@index([status])
+}
+
+model NetPosition {
+  id                  String      @id @default(cuid())
+  contractId          String      @unique
+  participant         String
+  cycleId             String
+  cycle               NettingCycle @relation(fields: [cycleId], references: [cycleId])
+  netAmountSettlement Decimal     @db.Decimal(20, 8)
+  settlementCurrency  String
+  status              String
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@index([participant])
+  @@index([cycleId])
+}
+
+model SettlementInstruction {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  payer      String
+  receiver   String
+  amount     Decimal  @db.Decimal(20, 8)
+  currency   String
+  cycleId    String
+  status     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([payer])
+  @@index([receiver])
+  @@index([cycleId])
+}
+
+model FxRate {
+  id           String   @id @default(cuid())
+  contractId   String   @unique
+  fromCurrency String
+  toCurrency   String
+  rate         Decimal  @db.Decimal(20, 8)
+  asOf         DateTime
+  updatedAt    DateTime @updatedAt
+
+  @@unique([fromCurrency, toCurrency])
+}
+
+model CashAccount {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  owner      String
+  currency   String
+  balance    Decimal  @db.Decimal(20, 8)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([owner, currency])
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  timestamp    DateTime @default(now())
+  eventType    String
+  actorPartyId String?
+  contractId   String?
+  templateId   String?
+  payload      Json
+  cycleId      String?
+
+  @@index([timestamp])
+  @@index([eventType])
+  @@index([actorPartyId])
+  @@index([cycleId])
+}
+
+model FxRateHistory {
+  id           String   @id @default(cuid())
+  contractId   String
+  fromCurrency String
+  toCurrency   String
+  rate         Decimal  @db.Decimal(20, 8)
+  asOf         DateTime
+  recordedAt   DateTime @default(now())
+
+  @@index([fromCurrency, toCurrency])
+  @@index([asOf])
+}
+
+model OperatorSettings {
+  id            String   @id @default("default")
+  cronSchedule  String
+  fxProvider    String
+  notifications Json     @default("{}")
+  updatedAt     DateTime @updatedAt
+}

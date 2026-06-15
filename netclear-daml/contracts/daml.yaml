@@ -1,0 +1,8 @@
+name: netclear-contracts
+version: 1.0.0
+source: daml
+dependencies:
+  - daml-prim
+  - daml-stdlib
+build-options:
+  - --target=2.1

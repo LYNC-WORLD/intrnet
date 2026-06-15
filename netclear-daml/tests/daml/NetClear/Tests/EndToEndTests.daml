@@ -1,0 +1,183 @@
+module NetClear.Tests.EndToEndTests where
+
+import Daml.Script
+import NetClear.NettingAgreement
+import NetClear.NettingCycle
+import NetClear.NetPosition
+import NetClear.SettlementInstruction
+import NetClear.CashAccount
+import NetClear.Tests.TestUtils
+
+testFullNettingCycle : Script ()
+testFullNettingCycle = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  agreementCid <- createAgreement parties
+  _ <- seedCashAccount parties.operator parties.companyA "USD" 2000000.0
+  _ <- seedCashAccount parties.operator parties.companyB "USD" 2000000.0
+  _ <- seedCashAccount parties.operator parties.companyC "USD" 2000000.0
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 500000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-E2E-001"
+      cutoffTime = testNow
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  _ <- submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids = [("EUR", eurOracleCid)]
+
+  positionsB <- query @NetPosition parties.companyB
+  assert (length positionsB == 1)
+  let (posCid, posB) = expectOne "Expected net position for company B" positionsB
+  assert (posB.netAmountSettlement == 550000.0)
+
+  positionsA <- query @NetPosition parties.companyA
+  let (_, posA) = expectOne "Expected net position for company A" positionsA
+  assert (posA.netAmountSettlement == -550000.0)
+
+  _ <- submit parties.companyA do
+    exerciseCmd (fst (expectOne "Expected net position for company A" positionsA)) AcknowledgePosition
+  _ <- submit parties.companyB do
+    exerciseCmd posCid AcknowledgePosition
+
+  payerAccts <- query @CashAccount parties.companyA
+  receiverAccts <- query @CashAccount parties.companyB
+  let (payerAcctCid, _) = expectOne "Expected payer cash account" payerAccts
+  let (receiverAcctCid, _) = expectOne "Expected receiver cash account" receiverAccts
+
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 550000.0
+      currency = "USD"
+      cycleId = "CYCLE-E2E-001"
+      operator = parties.operator
+      status = "PENDING"
+
+  executedCid <- submit parties.operator do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+
+  confirmedCid <- submit parties.companyB do
+    exerciseCmd executedCid ConfirmReceipt
+
+  Some inst <- queryContractId parties.companyB confirmedCid
+  assert (inst.status == "CONFIRMED")
+
+  closedCid <- submit parties.operator do
+    exerciseCmd cycleCid2 CloseCycle
+  Some cycle <- queryContractId parties.operator closedCid
+  assert (cycle.status == "CLOSED")
+
+testThreeCompanySixObligationsCycle : Script ()
+testThreeCompanySixObligationsCycle = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  gbpOracleCid <- seedFxOracle parties.operator "GBP" "USD" 1.25
+  jpyOracleCid <- seedFxOracle parties.operator "JPY" "USD" 0.01
+  agreementCid <- createAgreement parties
+
+  _ <- seedCashAccount parties.operator parties.companyA "USD" 2000000.0
+  _ <- seedCashAccount parties.operator parties.companyB "USD" 2000000.0
+  _ <- seedCashAccount parties.operator parties.companyC "USD" 2000000.0
+
+  aToBCid <- createObligation parties.companyA parties.companyB parties.operator 100.0 "EUR"
+  aToCCid <- createObligation parties.companyA parties.companyC parties.operator 80.0 "USD"
+  bToACid <- createObligation parties.companyB parties.companyA parties.operator 50.0 "GBP"
+  bToCCid <- createObligation parties.companyB parties.companyC parties.operator 100.0 "JPY"
+  cToACid <- createObligation parties.companyC parties.companyA parties.operator 40.0 "EUR"
+  cToBCid <- createObligation parties.companyC parties.companyB parties.operator 20.0 "GBP"
+
+  aToBAcc <- acceptObligation parties.companyB aToBCid
+  aToCAcc <- acceptObligation parties.companyC aToCCid
+  bToAAcc <- acceptObligation parties.companyA bToACid
+  bToCAcc <- acceptObligation parties.companyC bToCCid
+  cToAAcc <- acceptObligation parties.companyA cToACid
+  cToBAcc <- acceptObligation parties.companyB cToBCid
+
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-E2E-THREE-COMPANIES"
+      cutoffTime = testNow
+
+  cycleCid1 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = aToBAcc
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid1 AddObligation with obCid = aToCAcc
+  cycleCid3 <- submit parties.operator do
+    exerciseCmd cycleCid2 AddObligation with obCid = bToAAcc
+  cycleCid4 <- submit parties.operator do
+    exerciseCmd cycleCid3 AddObligation with obCid = bToCAcc
+  cycleCid5 <- submit parties.operator do
+    exerciseCmd cycleCid4 AddObligation with obCid = cToAAcc
+  cycleCid6 <- submit parties.operator do
+    exerciseCmd cycleCid5 AddObligation with obCid = cToBAcc
+
+  _ <- submit parties.operator do
+    exerciseCmd cycleCid6 ComputeNetPositions with
+      fxRateCids =
+        [ ("EUR", eurOracleCid)
+        , ("GBP", gbpOracleCid)
+        , ("JPY", jpyOracleCid)
+        ]
+
+  posA <- query @NetPosition parties.companyA
+  posB <- query @NetPosition parties.companyB
+  posC <- query @NetPosition parties.companyC
+  assert (length posA == 1)
+  assert (length posB == 1)
+  assert (length posC == 1)
+
+  let (posACid, posAData) = expectOne "Expected net position for company A" posA
+  let (posBCid, posBData) = expectOne "Expected net position for company B" posB
+  let (posCCid, posCData) = expectOne "Expected net position for company C" posC
+
+  let nets =
+        [ PartyNet with party = parties.companyA; net = posAData.netAmountSettlement
+        , PartyNet with party = parties.companyB; net = posBData.netAmountSettlement
+        , PartyNet with party = parties.companyC; net = posCData.netAmountSettlement
+        ]
+  assertNetsSumToZero nets
+  assert (posAData.settlementCurrency == "USD")
+  assert (posBData.settlementCurrency == "USD")
+  assert (posCData.settlementCurrency == "USD")
+  assert (posAData.netAmountSettlement < 0.0)
+  assert (posBData.netAmountSettlement > 0.0)
+  assert (posCData.netAmountSettlement > 0.0)
+
+  _ <- submit parties.companyA do
+    exerciseCmd posACid AcknowledgePosition
+  _ <- submit parties.companyB do
+    exerciseCmd posBCid AcknowledgePosition
+  _ <- submit parties.companyC do
+    exerciseCmd posCCid AcknowledgePosition
+
+  let initialBalance = 2000000.0
+  let settlements = generateSettlementPairs nets
+  assert (length settlements >= 1)
+
+  executeSettlementsFromNets
+    parties.operator
+    "CYCLE-E2E-THREE-COMPANIES"
+    "USD"
+    settlements
+
+  aAcctsAfter <- query @CashAccount parties.companyA
+  bAcctsAfter <- query @CashAccount parties.companyB
+  cAcctsAfter <- query @CashAccount parties.companyC
+  let (_, aAfter) = expectOne "Expected cash account for company A" aAcctsAfter
+  let (_, bAfter) = expectOne "Expected cash account for company B" bAcctsAfter
+  let (_, cAfter) = expectOne "Expected cash account for company C" cAcctsAfter
+  assert (aAfter.balance == initialBalance + posAData.netAmountSettlement)
+  assert (bAfter.balance == initialBalance + posBData.netAmountSettlement)
+  assert (cAfter.balance == initialBalance + posCData.netAmountSettlement)
+
+  closedCid <- submit parties.operator do
+    exerciseCmd cycleCid6 CloseCycle
+  Some cycle <- queryContractId parties.operator closedCid
+  assert (cycle.status == "CLOSED")

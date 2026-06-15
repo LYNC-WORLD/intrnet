@@ -1,0 +1,61 @@
+module NetClear.Tests.ObligationTests where
+
+import Daml.Script
+import NetClear.Obligation
+import NetClear.Tests.TestUtils
+
+testAcceptObligation : Script ()
+testAcceptObligation = do
+  parties <- allocateTestParties
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 500000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  Some ob <- queryContractId parties.companyB acceptedCid
+  assert (ob.status == "ACCEPTED")
+
+testRejectObligation : Script ()
+testRejectObligation = do
+  parties <- allocateTestParties
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  submit parties.companyB do
+    exerciseCmd obCid RejectObligation with reason = "Disputed"
+  obligations <- query @Obligation parties.companyB
+  assert (length obligations == 0)
+
+testNonReceiverCannotAccept : Script ()
+testNonReceiverCannotAccept = do
+  parties <- allocateTestParties
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  submitMustFail parties.companyC do
+    exerciseCmd obCid AcceptObligation
+
+testMarkAsNetted : Script ()
+testMarkAsNetted = do
+  parties <- allocateTestParties
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  nettedCid <- submit parties.operator do
+    exerciseCmd acceptedCid MarkAsNetted
+  Some ob <- queryContractId parties.operator nettedCid
+  assert (ob.status == "NETTED")
+
+testNonOperatorCannotMarkAsNetted : Script ()
+testNonOperatorCannotMarkAsNetted = do
+  parties <- allocateTestParties
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  submitMustFail parties.companyA do
+    exerciseCmd acceptedCid MarkAsNetted
+
+testPendingObligationCannotBeNetted : Script ()
+testPendingObligationCannotBeNetted = do
+  parties <- allocateTestParties
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  submitMustFail parties.operator do
+    exerciseCmd obCid MarkAsNetted
+
+testObligationPrivacy : Script ()
+testObligationPrivacy = do
+  parties <- allocateTestParties
+  _ <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  obligationsC <- query @Obligation parties.companyC
+  assert (length obligationsC == 0)

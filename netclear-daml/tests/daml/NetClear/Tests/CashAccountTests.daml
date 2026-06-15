@@ -1,0 +1,30 @@
+module NetClear.Tests.CashAccountTests where
+
+import Daml.Script
+import NetClear.CashAccount
+import NetClear.Tests.TestUtils
+
+testCreditIncreasesBalance : Script ()
+testCreditIncreasesBalance = do
+  parties <- allocateTestParties
+  acctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000.0
+  newCid <- submit parties.operator do
+    exerciseCmd acctCid Credit with creditAmount = 500.0
+  Some acct <- queryContractId parties.companyA newCid
+  assert (acct.balance == 1500.0)
+
+testDebitDecreasesBalance : Script ()
+testDebitDecreasesBalance = do
+  parties <- allocateTestParties
+  acctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000.0
+  newCid <- submit parties.operator do
+    exerciseCmd acctCid Debit with debitAmount = 300.0
+  Some acct <- queryContractId parties.companyA newCid
+  assert (acct.balance == 700.0)
+
+testDebitInsufficientBalance : Script ()
+testDebitInsufficientBalance = do
+  parties <- allocateTestParties
+  acctCid <- seedCashAccount parties.operator parties.companyA "USD" 100.0
+  submitMustFail parties.operator do
+    exerciseCmd acctCid Debit with debitAmount = 200.0

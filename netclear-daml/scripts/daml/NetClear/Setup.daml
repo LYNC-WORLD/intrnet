@@ -1,0 +1,50 @@
+module NetClear.Setup where
+
+import Daml.Script
+import NetClear.FxRateOracle
+import NetClear.NettingAgreement
+import NetClear.CashAccount
+import DA.Time (time)
+import DA.Date (date, Month(..))
+import DA.Foldable (forA_)
+
+setup : Script ()
+setup = do
+  operator <- allocatePartyByHint (PartyIdHint "operator")
+  companyA <- allocatePartyByHint (PartyIdHint "company-a")
+  companyB <- allocatePartyByHint (PartyIdHint "company-b")
+  companyC <- allocatePartyByHint (PartyIdHint "company-c")
+
+  let now = time (date 2025 Jan 1) 0 0 0
+
+  submit operator do
+    createCmd FxRateOracle with
+      operator = operator; fromCurrency = "EUR"
+      toCurrency = "USD"; rate = 1.10; asOf = now
+
+  submit operator do
+    createCmd FxRateOracle with
+      operator = operator; fromCurrency = "GBP"
+      toCurrency = "USD"; rate = 1.27; asOf = now
+
+  submit operator do
+    createCmd FxRateOracle with
+      operator = operator; fromCurrency = "JPY"
+      toCurrency = "USD"; rate = 0.0067; asOf = now
+
+  submit operator do
+    createCmd NettingAgreement with
+      operator = operator
+      participants = [companyA, companyB, companyC]
+      settlementCurrency = "USD"
+      fxOracleParty = operator
+      agreementDate = date 2025 Jan 1
+      agreementId = "AGREEMENT-2025-001"
+
+  forA_ [companyA, companyB, companyC] (\p -> submit operator do
+    createCmd CashAccount with
+      owner = p; currency = "USD"; balance = 2000000.0; operator = operator
+    )
+
+  debug "Setup complete."
+  return ()

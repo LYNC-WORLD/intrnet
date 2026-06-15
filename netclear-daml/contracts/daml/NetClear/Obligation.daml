@@ -1,0 +1,38 @@
+module NetClear.Obligation where
+
+template Obligation
+  with
+    payer : Party
+    receiver : Party
+    amount : Decimal
+    currency : Text
+    description : Text
+    invoiceRef : Text
+    agreementId : Text
+    operator : Party
+    status : Text
+    createdAt : Time
+  where
+    signatory payer
+    observer [receiver, operator]
+
+    ensure amount > 0.0 && payer /= receiver
+
+    choice AcceptObligation : ContractId Obligation
+      controller receiver
+      do
+        assertMsg "Only PENDING obligations can be accepted" (status == "PENDING")
+        create this with status = "ACCEPTED"
+
+    choice RejectObligation : ()
+      with reason : Text
+      controller receiver
+      do
+        assertMsg "Only PENDING obligations can be rejected" (status == "PENDING")
+        return ()
+
+    choice MarkAsNetted : ContractId Obligation
+      controller operator
+      do
+        assertMsg "Only ACCEPTED obligations can be netted" (status == "ACCEPTED")
+        create this with status = "NETTED"
