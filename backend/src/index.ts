@@ -8,6 +8,7 @@ import cyclesRouter from "./routes/cycles";
 import positionsRouter from "./routes/positions";
 import referenceRouter from "./routes/reference";
 import fxRatesRouter from "./routes/fxRates";
+import agreementsRouter from "./routes/agreements";
 import { startEventProcessor } from "./services/eventProcessor";
 import { startFxOracleScheduler } from "./services/fxOracle";
 
@@ -24,6 +25,7 @@ app.use("/api/cycles", cyclesRouter);
 app.use("/api/positions", positionsRouter);
 app.use("/api", referenceRouter);
 app.use("/api/fx-rates", fxRatesRouter);
+app.use("/api/agreements", agreementsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

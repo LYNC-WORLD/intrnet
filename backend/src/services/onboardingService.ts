@@ -5,12 +5,15 @@ import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
 import { getCantonAdapter } from "../canton";
 import { generateTemporaryPassword, slugify } from "../utils/crypto";
+import { isServiceError } from "../utils/http";
+import { resolveAgreementFromInput, upsertAgreementFromLedger } from "./agreementsService";
 
 export interface OnboardCompanyInput {
   companyName: string;
   email: string;
   partyHint: string;
-  agreementContractId: string;
+  agreementId?: string;
+  agreementContractId?: string;
   initialPassword?: string;
 }
 
@@ -28,18 +31,40 @@ export async function onboardCompany(input: OnboardCompanyInput) {
   await adapter.createLedgerUser({ userId: ledgerUserId, partyId });
   const partyToken = await adapter.mintPartyToken({ userId: ledgerUserId, partyId });
 
+  const agreementResolution = await resolveAgreementFromInput({
+    agreementId: input.agreementId,
+    agreementContractId: input.agreementContractId,
+  });
+  if (isServiceError(agreementResolution)) {
+    throw new Error(agreementResolution.error);
+  }
+  const { agreementId, agreementContractId } = agreementResolution.data;
+
   const client = operatorClient();
-  const agreement = await client.fetchById(input.agreementContractId);
+  const agreement = await client.fetchById(agreementContractId);
   if (!agreement) throw new Error("NettingAgreement not found on ledger");
 
   const participants = (agreement.payload.participants as string[]) ?? [];
   if (!participants.includes(partyId)) {
-    await client.exercise({
+    const result = await client.exercise({
       templateId: T.NettingAgreement,
-      contractId: input.agreementContractId,
+      contractId: agreementContractId,
       choice: "AddParticipant",
       argument: { newParticipant: partyId },
     });
+
+    const created = (result.events as Array<{ created?: { contractId: string; payload?: Record<string, unknown> } }>).find(
+      (event) => event.created,
+    );
+    if (created?.created?.contractId && created.created.payload) {
+      await upsertAgreementFromLedger(created.created.contractId, {
+        agreementId: created.created.payload.agreementId as string | undefined,
+        operator: created.created.payload.operator as string | undefined,
+        settlementCurrency: created.created.payload.settlementCurrency as string | undefined,
+        participants: created.created.payload.participants as string[] | undefined,
+        agreementDate: created.created.payload.agreementDate as string | undefined,
+      });
+    }
   }
 
   const operatorPartyId = await getOperatorPartyId();
@@ -69,6 +94,8 @@ export async function onboardCompany(input: OnboardCompanyInput) {
       partyId,
       ledgerUserId,
       partyToken,
+      agreementId,
+      agreementContractId,
       role: "participant",
       companyName: input.companyName,
       status: "ACTIVE",
@@ -82,6 +109,7 @@ export async function onboardCompany(input: OnboardCompanyInput) {
     role: user.role,
     partyId,
     ledgerUserId,
+    agreementId: user.agreementId,
     temporaryPassword,
   };
 }

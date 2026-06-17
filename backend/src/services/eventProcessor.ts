@@ -7,6 +7,7 @@ import {
   mapCreatedEventType,
   recordAuditEvent,
 } from "./auditService";
+import { upsertAgreementFromLedger } from "./agreementsService";
 
 type LedgerEvent = {
   created?: {
@@ -78,6 +79,16 @@ async function onCreated(event: LedgerEvent["created"]) {
         status: p.status,
         cutoffTime: new Date(p.cutoffTime),
       },
+    });
+  }
+
+  if (templateId.includes("NettingAgreement")) {
+    await upsertAgreementFromLedger(contractId, {
+      agreementId: p.agreementId,
+      operator: p.operator,
+      settlementCurrency: p.settlementCurrency,
+      participants: p.participants as string[] | undefined,
+      agreementDate: p.agreementDate,
     });
   }
 
@@ -170,6 +181,10 @@ async function onArchived(event: LedgerEvent["archived"]) {
   await prisma.obligation.updateMany({
     where: { contractId, status: "PENDING" },
     data: { status: "REJECTED" },
+  });
+  await prisma.netPosition.updateMany({
+    where: { contractId, status: "PENDING" },
+    data: { status: "ARCHIVED" },
   });
 
   if (templateId.includes("Obligation")) {

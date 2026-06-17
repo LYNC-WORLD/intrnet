@@ -6,16 +6,21 @@ import { T } from "../ledger/templateIds";
 export async function listObligations(params: {
   partyId: string;
   userRole: string;
+  userAgreementId?: string | null;
+  agreementId?: string;
   status?: string;
   role?: string;
   currency?: string;
   page: number;
   limit: number;
 }) {
-  const { partyId, userRole, status, role, currency, page, limit } = params;
+  const { partyId, userRole, userAgreementId, agreementId, status, role, currency, page, limit } = params;
   const where: any = {};
   if (userRole !== "operator") {
     where.OR = [{ payer: partyId }, { receiver: partyId }];
+    if (userAgreementId) where.agreementId = userAgreementId;
+  } else if (agreementId) {
+    where.agreementId = agreementId;
   }
   if (status) where.status = status;
   if (currency) where.currency = currency;
@@ -47,14 +52,44 @@ export async function getObligation(contractId: string, partyId: string, role: s
 export async function createObligation(params: {
   token: string;
   partyId: string;
+  userRole: string;
+  userAgreementId?: string | null;
   receiver: string;
   amount: number;
   currency: string;
   description: string;
   invoiceRef: string;
-  agreementId: string;
+  agreementId?: string;
 }) {
-  const { token, partyId, receiver, amount, currency, description, invoiceRef, agreementId } = params;
+  const {
+    token,
+    partyId,
+    userRole,
+    userAgreementId,
+    receiver,
+    amount,
+    currency,
+    description,
+    invoiceRef,
+    agreementId: inputAgreementId,
+  } = params;
+  const agreementId = userRole === "operator" ? inputAgreementId : userAgreementId;
+  if (!agreementId) {
+    throw new Error("agreementId is required");
+  }
+
+  const agreement = await prisma.nettingAgreement.findUnique({ where: { agreementId } });
+  if (!agreement) {
+    throw new Error("Agreement not found");
+  }
+  const participants = Array.isArray(agreement.participants) ? (agreement.participants as string[]) : [];
+  if (!participants.includes(partyId)) {
+    throw new Error("Payer is not a participant in the selected agreement");
+  }
+  if (!participants.includes(receiver)) {
+    throw new Error("Receiver is not a participant in the same agreement");
+  }
+
   const operatorPartyId = await getOperatorPartyId();
   return partyClient(token).create({
     templateId: T.Obligation,

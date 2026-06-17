@@ -14,11 +14,15 @@ model User {
   partyId      String   @unique
   ledgerUserId String?  @unique
   partyToken   String
+  agreementId  String?
+  agreementContractId String?
   role         String
   companyName  String
   status       String   @default("ACTIVE")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  @@index([agreementId])
 }
 
 model Obligation {
@@ -38,6 +42,18 @@ model Obligation {
   @@index([payer])
   @@index([receiver])
   @@index([status])
+  @@index([agreementId])
+}
+
+model NettingAgreement {
+  id                 String   @id @default(cuid())
+  agreementId        String   @unique
+  contractId         String   @unique
+  operator           String
+  settlementCurrency String
+  participants       Json
+  agreementDate      DateTime
+  updatedAt          DateTime @updatedAt
 }
 
 model NettingCycle {

@@ -2,13 +2,13 @@ import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
 
-export async function bulkAddObligations(cycleCid: string, cycleId: string) {
+export async function bulkAddObligations(cycleCid: string, cycleId: string, agreementId: string) {
   const client = operatorClient();
   const current = await client.fetchById(cycleCid);
   if (!current) throw new Error("NettingCycle contract not found");
 
   const accepted = await prisma.obligation.findMany({
-    where: { status: "ACCEPTED" },
+    where: { status: "ACCEPTED", agreementId },
   });
 
   let latestCycleCid = cycleCid;

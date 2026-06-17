@@ -5,5 +5,6 @@ import { authenticateJWT } from "../middleware/auth";
 const router = Router();
 
 router.get("/", authenticateJWT, positionsController.list);
+router.post("/:contractId/acknowledge", authenticateJWT, positionsController.acknowledge);
 
 export default router;

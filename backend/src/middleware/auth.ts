@@ -7,6 +7,7 @@ export interface AuthPayload {
   partyId: string;
   token: string;
   role: string;
+  agreementId?: string | null;
 }
 
 declare global {
@@ -34,6 +35,7 @@ export async function authenticateJWT(req: Request, res: Response, next: NextFun
       partyId: user.partyId,
       token: user.partyToken,
       role: user.role,
+      agreementId: user.agreementId,
     };
     return next();
   } catch {
