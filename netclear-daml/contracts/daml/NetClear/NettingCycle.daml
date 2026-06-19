@@ -3,6 +3,8 @@ module NetClear.NettingCycle where
 import NetClear.Obligation
 import NetClear.FxRateOracle
 import NetClear.NetPosition
+import NetClear.SettlementInstruction
+import NetClear.SettlementLogic
 
 template NettingCycle
   with
@@ -14,6 +16,11 @@ template NettingCycle
     status : Text
     cutoffTime : Time
     agreementId : Text
+    ackDeadline : Optional Time
+    positionCids : [ContractId NetPosition]
+    settlementInstructionCids : [ContractId SettlementInstruction]
+    settlementPhase : Text
+    forceSettled : Bool
   where
     signatory operator
     observer participants
@@ -32,12 +39,14 @@ template NettingCycle
         assertMsg "Receiver must be in cycle participants" (elem ob.receiver participants)
         create this with obligationCids = obCid :: obligationCids
 
-    nonconsuming choice ComputeNetPositions : [ContractId NetPosition]
+    choice ComputeNetPositions : ContractId NettingCycle
       with
         fxRateCids : [(Text, ContractId FxRateOracle)]
+        ackDeadline : Time
       controller operator
       do
         assertMsg "Cycle must be OPEN to compute" (status == "OPEN")
+        assertMsg "Cycle must not be settled before compute" (settlementPhase == "NOT_SETTLED")
 
         obligationsConverted <- forA obligationCids $ \obCid -> do
           ob <- fetch obCid
@@ -59,7 +68,7 @@ template NettingCycle
               0.0
               obligationsConverted
 
-        forA participants $ \p ->
+        newPositionCids <- forA participants $ \p ->
           create NetPosition with
             participant = p
             cycleId
@@ -67,9 +76,108 @@ template NettingCycle
             netAmountSettlement = computeNet p
             settlementCurrency
             status = "PENDING"
+        create this with
+          ackDeadline = Some ackDeadline
+          positionCids = newPositionCids
+          settlementInstructionCids = []
+          settlementPhase = "NOT_SETTLED"
+          forceSettled = False
+
+    choice SettleCycle : ContractId NettingCycle
+      with
+        positionCids : [ContractId NetPosition]
+      controller operator
+      do
+        assertMsg "Cycle must be OPEN to settle" (status == "OPEN")
+        assertMsg "Cycle already settled" (settlementPhase == "NOT_SETTLED")
+        assertMsg "Compute net positions before settlement" (not (null this.positionCids))
+        assertMsg "Settlement positions are required" (not (null positionCids))
+        assertMsg "ackDeadline must be set before settlement" (ackDeadline /= None)
+
+        positionData <- forA positionCids $ \positionCid -> do
+          position <- fetch positionCid
+          assertMsg "Position cycleId must match cycle" (position.cycleId == cycleId)
+          assertMsg "Position participant must belong to cycle participants" (elem position.participant participants)
+          assertMsg "All positions must be ACKNOWLEDGED before settle" (position.status == "ACKNOWLEDGED")
+          return position
+        assertMsg "Settlement positions must include every participant" (length positionData == length participants)
+        let positionParticipants = map (\position -> position.participant) positionData
+        assertMsg "Settlement positions must match cycle participants" (all (\participant -> elem participant positionParticipants) participants)
+
+        let nets = map (\position -> (position.participant, position.netAmountSettlement)) positionData
+        let settlements = generateSettlementPairs nets
+        instructionCids <- forA settlements $ \(payer, receiver, amount) ->
+          create SettlementInstruction with
+            payer
+            receiver
+            amount
+            currency = settlementCurrency
+            cycleId
+            operator
+            status = "PENDING"
+
+        create this with
+          positionCids = positionCids
+          settlementInstructionCids = instructionCids
+          settlementPhase = "SETTLED"
+          forceSettled = False
+
+    choice ForceSettleCycle : ContractId NettingCycle
+      with
+        positionCids : [ContractId NetPosition]
+      controller operator
+      do
+        assertMsg "Cycle must be OPEN to force settle" (status == "OPEN")
+        assertMsg "Cycle already settled" (settlementPhase == "NOT_SETTLED")
+        assertMsg "Compute net positions before settlement" (not (null this.positionCids))
+        assertMsg "Settlement positions are required" (not (null positionCids))
+        deadline <- case ackDeadline of
+          Some value -> return value
+          None -> abort "ackDeadline must be set before force settlement"
+
+        now <- getTime
+        assertMsg "ackDeadline has not passed for force settlement" (now >= deadline)
+
+        positionData <- forA positionCids $ \positionCid -> do
+          position <- fetch positionCid
+          assertMsg "Position cycleId must match cycle" (position.cycleId == cycleId)
+          assertMsg "Position participant must belong to cycle participants" (elem position.participant participants)
+          return position
+        assertMsg "Settlement positions must include every participant" (length positionData == length participants)
+        let positionParticipants = map (\position -> position.participant) positionData
+        assertMsg "Settlement positions must match cycle participants" (all (\participant -> elem participant positionParticipants) participants)
+
+        let nets = map (\position -> (position.participant, position.netAmountSettlement)) positionData
+        let settlements = generateSettlementPairs nets
+        instructionCids <- forA settlements $ \(payer, receiver, amount) ->
+          create SettlementInstruction with
+            payer
+            receiver
+            amount
+            currency = settlementCurrency
+            cycleId
+            operator
+            status = "PENDING"
+
+        create this with
+          positionCids = positionCids
+          settlementInstructionCids = instructionCids
+          settlementPhase = "SETTLED"
+          forceSettled = True
 
     choice CloseCycle : ContractId NettingCycle
+      with
+        settlementInstructionCids : [ContractId SettlementInstruction]
       controller operator
       do
         assertMsg "Cycle must be OPEN to close" (status == "OPEN")
-        create this with status = "CLOSED"
+        assertMsg "Cycle must be settled before close" (settlementPhase == "SETTLED")
+        assertMsg "Close instructions must match settled instruction count"
+          (length settlementInstructionCids == length this.settlementInstructionCids)
+        forA settlementInstructionCids $ \instructionCid -> do
+          instruction <- fetch instructionCid
+          assertMsg "Instruction cycleId must match cycle" (instruction.cycleId == cycleId)
+          assertMsg "All settlement instructions must be CONFIRMED before close" (instruction.status == "CONFIRMED")
+        create this with
+          status = "CLOSED"
+          settlementInstructionCids = settlementInstructionCids

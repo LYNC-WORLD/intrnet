@@ -3,10 +3,13 @@ module NetClear.Tests.TestUtils where
 import Daml.Script
 import NetClear.FxRateOracle
 import NetClear.NettingAgreement
+import NetClear.NettingCycle
+import NetClear.NetPosition
 import NetClear.CashAccount
 import NetClear.Obligation
 import NetClear.SettlementInstruction
-import DA.Time (time)
+import qualified NetClear.SettlementLogic as SettlementLogic
+import DA.Time (time, addRelTime, seconds)
 import DA.Date (date, Month(..))
 import DA.Foldable (forA_)
 import qualified DA.Foldable as F
@@ -19,6 +22,9 @@ data TestParties = TestParties with
 
 testNow : Time
 testNow = time (date 2025 Jan 1) 0 0 0
+
+ackDeadlineOneHour : Time
+ackDeadlineOneHour = addRelTime testNow (seconds 3600)
 
 expectOne : Text -> [a] -> a
 expectOne msg [] = error msg
@@ -82,6 +88,60 @@ acceptObligation receiver obCid = do
   submit receiver do
     exerciseCmd obCid AcceptObligation
 
+getPositionsForCycle :
+  Party -> Text -> Script [(ContractId NetPosition, NetPosition)]
+getPositionsForCycle querier cycleId = do
+  positions <- query @NetPosition querier
+  return $ filter (\(_, pos) -> pos.cycleId == cycleId) positions
+
+getPositionCidsForCycle : Party -> Text -> Script [ContractId NetPosition]
+getPositionCidsForCycle querier cycleId =
+  map fst <$> getPositionsForCycle querier cycleId
+
+getAcknowledgedPositionCids : Party -> Text -> Script [ContractId NetPosition]
+getAcknowledgedPositionCids querier cycleId = do
+  positions <- getPositionsForCycle querier cycleId
+  return $ map fst $ filter (\(_, pos) -> pos.status == "ACKNOWLEDGED") positions
+
+getPendingPositionCids : Party -> Text -> Script [ContractId NetPosition]
+getPendingPositionCids querier cycleId = do
+  positions <- getPositionsForCycle querier cycleId
+  return $ map fst $ filter (\(_, pos) -> pos.status == "PENDING") positions
+
+acknowledgeAllPositionsForCycle :
+  TestParties -> Text -> Script [ContractId NetPosition]
+acknowledgeAllPositionsForCycle parties cycleId = do
+  pendingCids <- getPendingPositionCids parties.operator cycleId
+  assertMsg ("Expected pending positions for cycle " <> cycleId) (not (null pendingCids))
+  forA pendingCids $ \positionCid -> do
+    Some position <- queryContractId parties.operator positionCid
+    submit position.participant do
+      exerciseCmd positionCid AcknowledgePosition
+  getAcknowledgedPositionCids parties.operator cycleId
+
+setupCycleWithSingleObligation :
+  TestParties -> Text -> Decimal -> Text -> Script (ContractId NettingCycle)
+setupCycleWithSingleObligation parties cycleId amount currency = do
+  fxRateCids <-
+    if currency == "USD"
+      then return []
+      else do
+        oracleCid <- seedFxOracle parties.operator currency "USD" 1.10
+        return [(currency, oracleCid)]
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator amount currency
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids
+      ackDeadline = ackDeadlineOneHour
+
 data PartyNet = PartyNet with
     party : Party
     net : Decimal
@@ -92,21 +152,8 @@ assertNetsSumToZero nets =
 
 generateSettlementPairs : [PartyNet] -> [(Party, Party, Decimal)]
 generateSettlementPairs nets =
-  let payers = map (\n -> (n.party, negate n.net)) $ filter (\n -> n.net < 0.0) nets
-      receivers = map (\n -> (n.party, n.net)) $ filter (\n -> n.net > 0.0) nets
-  in greedySettle payers receivers
-
-greedySettle : [(Party, Decimal)] -> [(Party, Decimal)] -> [(Party, Party, Decimal)]
-greedySettle [] _ = []
-greedySettle _ [] = []
-greedySettle ((payer, pAmt) :: ps) ((receiver, rAmt) :: rs)
-  | pAmt <= 0.0 = greedySettle ps ((receiver, rAmt) :: rs)
-  | rAmt <= 0.0 = greedySettle ((payer, pAmt) :: ps) rs
-  | otherwise =
-      let settled = min pAmt rAmt
-          nextPs = if pAmt > settled then (payer, pAmt - settled) :: ps else ps
-          nextRs = if rAmt > settled then (receiver, rAmt - settled) :: rs else rs
-      in (payer, receiver, settled) :: greedySettle nextPs nextRs
+  SettlementLogic.generateSettlementPairs $
+    map (\n -> (n.party, n.net)) nets
 
 findCashAccountCid : Party -> Party -> Text -> Script (ContractId CashAccount)
 findCashAccountCid querier owner currency = do

@@ -38,3 +38,8 @@ template NettingAgreement
           status = "OPEN"
           cutoffTime
           agreementId = agreementId
+          ackDeadline = None
+          positionCids = []
+          settlementInstructionCids = []
+          settlementPhase = "NOT_SETTLED"
+          forceSettled = False

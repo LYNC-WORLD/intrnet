@@ -7,6 +7,7 @@ import NetClear.NetPosition
 import NetClear.SettlementInstruction
 import NetClear.CashAccount
 import NetClear.Tests.TestUtils
+import DA.Time (addRelTime, seconds)
 
 testFullNettingCycle : Script ()
 testFullNettingCycle = do
@@ -25,9 +26,10 @@ testFullNettingCycle = do
       cutoffTime = testNow
   cycleCid2 <- submit parties.operator do
     exerciseCmd cycleCid AddObligation with obCid = acceptedCid
-  _ <- submit parties.operator do
+  cycleCid3 <- submit parties.operator do
     exerciseCmd cycleCid2 ComputeNetPositions with
       fxRateCids = [("EUR", eurOracleCid)]
+      ackDeadline = addRelTime testNow (seconds 3600)
 
   positionsB <- query @NetPosition parties.companyB
   assert (length positionsB == 1)
@@ -37,26 +39,32 @@ testFullNettingCycle = do
   positionsA <- query @NetPosition parties.companyA
   let (_, posA) = expectOne "Expected net position for company A" positionsA
   assert (posA.netAmountSettlement == -550000.0)
+  positionsC <- query @NetPosition parties.companyC
+  let (posCCid, _) = expectOne "Expected net position for company C" positionsC
 
   _ <- submit parties.companyA do
     exerciseCmd (fst (expectOne "Expected net position for company A" positionsA)) AcknowledgePosition
   _ <- submit parties.companyB do
     exerciseCmd posCid AcknowledgePosition
+  _ <- submit parties.companyC do
+    exerciseCmd posCCid AcknowledgePosition
 
   payerAccts <- query @CashAccount parties.companyA
   receiverAccts <- query @CashAccount parties.companyB
   let (payerAcctCid, _) = expectOne "Expected payer cash account" payerAccts
   let (receiverAcctCid, _) = expectOne "Expected receiver cash account" receiverAccts
 
-  instCid <- submit parties.operator do
-    createCmd SettlementInstruction with
-      payer = parties.companyA
-      receiver = parties.companyB
-      amount = 550000.0
-      currency = "USD"
-      cycleId = "CYCLE-E2E-001"
-      operator = parties.operator
-      status = "PENDING"
+  acknowledgedPositions <- query @NetPosition parties.operator
+  let settlementPositionCids =
+        map fst $
+          filter
+            (\(_, pos) -> pos.cycleId == "CYCLE-E2E-001" && pos.status == "ACKNOWLEDGED")
+            acknowledgedPositions
+  settledCid <- submit parties.operator do
+    exerciseCmd cycleCid3 SettleCycle with
+      positionCids = settlementPositionCids
+  Some settledCycle <- queryContractId parties.operator settledCid
+  let instCid = expectOne "Expected one settlement instruction" settledCycle.settlementInstructionCids
 
   executedCid <- submit parties.operator do
     exerciseCmd instCid ExecuteSettlement with
@@ -70,7 +78,8 @@ testFullNettingCycle = do
   assert (inst.status == "CONFIRMED")
 
   closedCid <- submit parties.operator do
-    exerciseCmd cycleCid2 CloseCycle
+    exerciseCmd settledCid CloseCycle with
+      settlementInstructionCids = [confirmedCid]
   Some cycle <- queryContractId parties.operator closedCid
   assert (cycle.status == "CLOSED")
 
@@ -118,13 +127,14 @@ testThreeCompanySixObligationsCycle = do
   cycleCid6 <- submit parties.operator do
     exerciseCmd cycleCid5 AddObligation with obCid = cToBAcc
 
-  _ <- submit parties.operator do
+  cycleCid7 <- submit parties.operator do
     exerciseCmd cycleCid6 ComputeNetPositions with
       fxRateCids =
         [ ("EUR", eurOracleCid)
         , ("GBP", gbpOracleCid)
         , ("JPY", jpyOracleCid)
         ]
+      ackDeadline = addRelTime testNow (seconds 3600)
 
   posA <- query @NetPosition parties.companyA
   posB <- query @NetPosition parties.companyB
@@ -158,14 +168,29 @@ testThreeCompanySixObligationsCycle = do
     exerciseCmd posCCid AcknowledgePosition
 
   let initialBalance = 2000000.0
-  let settlements = generateSettlementPairs nets
-  assert (length settlements >= 1)
+  acknowledgedPositions <- query @NetPosition parties.operator
+  let settlementPositionCids =
+        map fst $
+          filter
+            (\(_, pos) -> pos.cycleId == "CYCLE-E2E-THREE-COMPANIES" && pos.status == "ACKNOWLEDGED")
+            acknowledgedPositions
+  settledCid <- submit parties.operator do
+    exerciseCmd cycleCid7 SettleCycle with
+      positionCids = settlementPositionCids
+  Some settledCycle <- queryContractId parties.operator settledCid
+  assert (length settledCycle.settlementInstructionCids >= 1)
 
-  executeSettlementsFromNets
-    parties.operator
-    "CYCLE-E2E-THREE-COMPANIES"
-    "USD"
-    settlements
+  confirmedInstructionCids <- forA settledCycle.settlementInstructionCids $ \instructionCid -> do
+    Some instruction <- queryContractId parties.operator instructionCid
+    payerAcctCid <- findCashAccountCid parties.operator instruction.payer "USD"
+    receiverAcctCid <- findCashAccountCid parties.operator instruction.receiver "USD"
+    executedCid <- submit parties.operator do
+      exerciseCmd instructionCid ExecuteSettlement with
+        payerAcctCid
+        receiverAcctCid
+    confirmedCid <- submit instruction.receiver do
+      exerciseCmd executedCid ConfirmReceipt
+    return confirmedCid
 
   aAcctsAfter <- query @CashAccount parties.companyA
   bAcctsAfter <- query @CashAccount parties.companyB
@@ -178,6 +203,7 @@ testThreeCompanySixObligationsCycle = do
   assert (cAfter.balance == initialBalance + posCData.netAmountSettlement)
 
   closedCid <- submit parties.operator do
-    exerciseCmd cycleCid6 CloseCycle
+    exerciseCmd settledCid CloseCycle with
+      settlementInstructionCids = confirmedInstructionCids
   Some cycle <- queryContractId parties.operator closedCid
   assert (cycle.status == "CLOSED")
