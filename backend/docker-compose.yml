@@ -1,24 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: intrnet-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: intrnet
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: intrnet
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U intrnet -d intrnet"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - intrnet
-
   backend:
     build:
       context: .
@@ -29,17 +9,5 @@ services:
       - "3001:3001"
     env_file:
       - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - intrnet
-
-networks:
-  intrnet:
-    driver: bridge
-
-volumes:
-  postgres_data:
