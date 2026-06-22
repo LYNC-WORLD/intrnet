@@ -1,0 +1,268 @@
+module Intrnet.Tests.NettingCycleTests where
+
+import Daml.Script
+import Intrnet.NettingAgreement
+import Intrnet.NettingCycle
+import Intrnet.NetPosition
+import Intrnet.Obligation
+import Intrnet.SettlementInstruction
+import Intrnet.Tests.TestUtils
+import DA.Time (addRelTime, seconds)
+
+testAddAcceptedObligation : Script ()
+testAddAcceptedObligation = do
+  parties <- allocateTestParties
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-001"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  newCycleCid <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  Some cycle <- queryContractId parties.operator newCycleCid
+  assert (length cycle.obligationCids == 1)
+
+testAddPendingObligationFails : Script ()
+testAddPendingObligationFails = do
+  parties <- allocateTestParties
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-002"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  submitMustFail parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = obCid
+
+testCannotAddSameObligationTwice : Script ()
+testCannotAddSameObligationTwice = do
+  parties <- allocateTestParties
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-DUP-OBL"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "USD"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  submitMustFail parties.operator do
+    exerciseCmd cycleCid2 AddObligation with obCid = acceptedCid
+
+testObligationAgreementMustMatchCycle : Script ()
+testObligationAgreementMustMatchCycle = do
+  parties <- allocateTestParties
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-MISMATCH-AGREEMENT"
+      cutoffTime = testNow
+  obCid <- submit parties.companyA do
+    createCmd Obligation with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 1000.0
+      currency = "USD"
+      description = "Mismatched agreement obligation"
+      invoiceRef = "INV-MISMATCH"
+      agreementId = "ANOTHER-AGREEMENT"
+      operator = parties.operator
+      status = "PENDING"
+      createdAt = testNow
+  acceptedCid <- acceptObligation parties.companyB obCid
+  submitMustFail parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+
+testComputeNetPositions : Script ()
+testComputeNetPositions = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-003"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 500000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  cycleCid3 <- submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids = [("EUR", eurOracleCid)]
+      ackDeadline = addRelTime testNow (seconds 3600)
+  Some computedCycle <- queryContractId parties.operator cycleCid3
+  assert (length computedCycle.positionCids == 3)
+  assert (computedCycle.ackDeadline /= None)
+  positionsA <- query @NetPosition parties.companyA
+  assert (length positionsA == 1)
+  case positionsA of
+    [(_, pos)] -> assert (pos.netAmountSettlement == -550000.0)
+    _ -> abort "Expected exactly one net position for company A"
+
+testCloseCycle : Script ()
+testCloseCycle = do
+  parties <- allocateTestParties
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-004"
+      cutoffTime = testNow
+  submitMustFail parties.operator do
+    exerciseCmd cycleCid CloseCycle with settlementInstructionCids = []
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid ComputeNetPositions with
+      fxRateCids = []
+      ackDeadline = addRelTime testNow (seconds 3600)
+  positions <- query @NetPosition parties.operator
+  let (posACid, _) =
+        expectOne "Expected net position for company A" $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-004" && pos.participant == parties.companyA) positions
+  let (posBCid, _) =
+        expectOne "Expected net position for company B" $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-004" && pos.participant == parties.companyB) positions
+  let (posCCid, _) =
+        expectOne "Expected net position for company C" $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-004" && pos.participant == parties.companyC) positions
+  _ <- submit parties.companyA do
+    exerciseCmd posACid AcknowledgePosition
+  _ <- submit parties.companyB do
+    exerciseCmd posBCid AcknowledgePosition
+  _ <- submit parties.companyC do
+    exerciseCmd posCCid AcknowledgePosition
+  acknowledgedPositions <- query @NetPosition parties.operator
+  let settlementPositionCids =
+        map fst $
+          filter
+            (\(_, pos) -> pos.cycleId == "CYCLE-004" && pos.status == "ACKNOWLEDGED")
+            acknowledgedPositions
+  settledCid <- submit parties.operator do
+    exerciseCmd cycleCid2 SettleCycle with
+      positionCids = settlementPositionCids
+  closedCid <- submit parties.operator do
+    exerciseCmd settledCid CloseCycle with settlementInstructionCids = []
+  Some cycle <- queryContractId parties.operator closedCid
+  assert (cycle.status == "CLOSED")
+
+testSettleCycleRequiresAcknowledgements : Script ()
+testSettleCycleRequiresAcknowledgements = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-SETTLE-ACK-001"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  cycleCid3 <- submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids = [("EUR", eurOracleCid)]
+      ackDeadline = addRelTime testNow (seconds 3600)
+
+  positions <- query @NetPosition parties.operator
+  let settlementPositionCids =
+        map fst $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-SETTLE-ACK-001" && pos.status /= "ARCHIVED") positions
+  submitMustFail parties.operator do
+    exerciseCmd cycleCid3 SettleCycle with
+      positionCids = settlementPositionCids
+
+testForceSettleRequiresDeadline : Script ()
+testForceSettleRequiresDeadline = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-FORCE-DEADLINE-001"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  cycleCid3 <- submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids = [("EUR", eurOracleCid)]
+      ackDeadline = addRelTime testNow (seconds 3600)
+
+  positions <- query @NetPosition parties.operator
+  let settlementPositionCids =
+        map fst $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-FORCE-DEADLINE-001" && pos.status /= "ARCHIVED") positions
+  submitMustFail parties.operator do
+    exerciseCmd cycleCid3 ForceSettleCycle with
+      positionCids = settlementPositionCids
+
+testCloseCycleRequiresConfirmedInstructions : Script ()
+testCloseCycleRequiresConfirmedInstructions = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  agreementCid <- createAgreement parties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 2000000.0
+  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 2000000.0
+
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-CLOSE-CONFIRM-001"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 1000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  cycleCid3 <- submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids = [("EUR", eurOracleCid)]
+      ackDeadline = addRelTime testNow (seconds 3600)
+
+  positions <- query @NetPosition parties.operator
+  let (posACid, _) =
+        expectOne "Expected net position for company A" $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-CLOSE-CONFIRM-001" && pos.participant == parties.companyA) positions
+  let (posBCid, _) =
+        expectOne "Expected net position for company B" $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-CLOSE-CONFIRM-001" && pos.participant == parties.companyB) positions
+  let (posCCid, _) =
+        expectOne "Expected net position for company C" $
+          filter (\(_, pos) -> pos.cycleId == "CYCLE-CLOSE-CONFIRM-001" && pos.participant == parties.companyC) positions
+
+  _ <- submit parties.companyA do
+    exerciseCmd posACid AcknowledgePosition
+  _ <- submit parties.companyB do
+    exerciseCmd posBCid AcknowledgePosition
+  _ <- submit parties.companyC do
+    exerciseCmd posCCid AcknowledgePosition
+
+  acknowledgedPositions <- query @NetPosition parties.operator
+  let settlementPositionCids =
+        map fst $
+          filter
+            (\(_, pos) -> pos.cycleId == "CYCLE-CLOSE-CONFIRM-001" && pos.status == "ACKNOWLEDGED")
+            acknowledgedPositions
+  settledCid <- submit parties.operator do
+    exerciseCmd cycleCid3 SettleCycle with
+      positionCids = settlementPositionCids
+  Some settledCycle <- queryContractId parties.operator settledCid
+  let instructionCid = expectOne "Expected one settlement instruction" settledCycle.settlementInstructionCids
+
+  submitMustFail parties.operator do
+    exerciseCmd settledCid CloseCycle with
+      settlementInstructionCids = [instructionCid]
+
+  executedCid <- submit parties.operator do
+    exerciseCmd instructionCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+  confirmedCid <- submit parties.companyB do
+    exerciseCmd executedCid ConfirmReceipt
+  Some confirmed <- queryContractId parties.companyB confirmedCid
+  assert (confirmed.status == "CONFIRMED")
+
+  closedCid <- submit parties.operator do
+    exerciseCmd settledCid CloseCycle with
+      settlementInstructionCids = [confirmedCid]
+  Some closedCycle <- queryContractId parties.operator closedCid
+  assert (closedCycle.status == "CLOSED")

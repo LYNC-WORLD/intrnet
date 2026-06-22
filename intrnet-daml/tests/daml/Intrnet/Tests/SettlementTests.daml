@@ -1,0 +1,136 @@
+module Intrnet.Tests.SettlementTests where
+
+import Daml.Script
+import Intrnet.SettlementInstruction
+import Intrnet.CashAccount
+import Intrnet.Tests.TestUtils
+
+testExecuteSettlement : Script ()
+testExecuteSettlement = do
+  parties <- allocateTestParties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000000.0
+  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 0.0
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 100000.0
+      currency = "USD"
+      cycleId = "CYCLE-001"
+      operator = parties.operator
+      status = "PENDING"
+  executedCid <- submit parties.operator do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+  Some inst <- queryContractId parties.companyB executedCid
+  assert (inst.status == "EXECUTED")
+  payerAccounts <- query @CashAccount parties.companyA
+  receiverAccounts <- query @CashAccount parties.companyB
+  assert (length payerAccounts == 1)
+  assert (length receiverAccounts == 1)
+  let (_, payerAcct) = expectOne "Expected payer cash account" payerAccounts
+  let (_, receiverAcct) = expectOne "Expected receiver cash account" receiverAccounts
+  assert (payerAcct.balance == 900000.0)
+  assert (receiverAcct.balance == 100000.0)
+
+testExecuteInsufficientBalance : Script ()
+testExecuteInsufficientBalance = do
+  parties <- allocateTestParties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 100.0
+  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 0.0
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 500.0
+      currency = "USD"
+      cycleId = "CYCLE-001"
+      operator = parties.operator
+      status = "PENDING"
+  submitMustFail parties.operator do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+
+testConfirmReceipt : Script ()
+testConfirmReceipt = do
+  parties <- allocateTestParties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000000.0
+  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 0.0
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 50000.0
+      currency = "USD"
+      cycleId = "CYCLE-001"
+      operator = parties.operator
+      status = "PENDING"
+  executedCid <- submit parties.operator do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+  confirmedCid <- submit parties.companyB do
+    exerciseCmd executedCid ConfirmReceipt
+  Some inst <- queryContractId parties.companyB confirmedCid
+  assert (inst.status == "CONFIRMED")
+
+testPayerCannotConfirm : Script ()
+testPayerCannotConfirm = do
+  parties <- allocateTestParties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000000.0
+  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 0.0
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 50000.0
+      currency = "USD"
+      cycleId = "CYCLE-001"
+      operator = parties.operator
+      status = "PENDING"
+  executedCid <- submit parties.operator do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+  submitMustFail parties.companyA do
+    exerciseCmd executedCid ConfirmReceipt
+
+testExecuteFailsWithWrongReceiverAccount : Script ()
+testExecuteFailsWithWrongReceiverAccount = do
+  parties <- allocateTestParties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000000.0
+  wrongReceiverAcctCid <- seedCashAccount parties.operator parties.companyC "USD" 0.0
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 50000.0
+      currency = "USD"
+      cycleId = "CYCLE-001"
+      operator = parties.operator
+      status = "PENDING"
+  submitMustFail parties.operator do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid = wrongReceiverAcctCid
+
+testPayerCannotExecuteSettlementDirectly : Script ()
+testPayerCannotExecuteSettlementDirectly = do
+  parties <- allocateTestParties
+  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 1000000.0
+  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 0.0
+  instCid <- submit parties.operator do
+    createCmd SettlementInstruction with
+      payer = parties.companyA
+      receiver = parties.companyB
+      amount = 50000.0
+      currency = "USD"
+      cycleId = "CYCLE-001"
+      operator = parties.operator
+      status = "PENDING"
+  submitMustFail parties.companyA do
+    exerciseCmd instCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid

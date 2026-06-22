@@ -30,7 +30,8 @@ export async function createAgreement(input: {
   agreementDate?: string;
 }) {
   const operator = await getOperatorPartyId();
-  return operatorClient().create({
+  const client = await operatorClient();
+  const created = await client.create({
     templateId: T.NettingAgreement,
     payload: {
       operator,
@@ -41,6 +42,9 @@ export async function createAgreement(input: {
       agreementId: input.agreementId,
     },
   });
+
+  await upsertAgreementFromLedger(created.contractId, created.payload as AgreementPayload);
+  return created;
 }
 
 export async function listAgreements() {
@@ -84,7 +88,8 @@ export async function resolveAgreementFromInput(input: {
     return { error: "agreementId or agreementContractId is required", status: 400 as const };
   }
 
-  const agreement = await operatorClient().fetchById(input.agreementContractId);
+  const client = await operatorClient();
+  const agreement = await client.fetchById(input.agreementContractId);
   if (!agreement) return { error: "NettingAgreement not found on ledger", status: 404 as const };
 
   const payload = agreement.payload as AgreementPayload;

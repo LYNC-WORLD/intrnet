@@ -55,6 +55,24 @@ export function wildcardEventFormat(parties: string[]) {
   return { filtersByParty };
 }
 
+export function templateEventFormat(parties: string[], templateIds: string[], packageId: string) {
+  const cumulative = templateIds.map((templateId) => ({
+    identifierFilter: {
+      TemplateFilter: {
+        value: {
+          templateId: qualifyTemplateId(templateId, packageId),
+          includeCreatedEventBlob: false,
+        },
+      },
+    },
+  }));
+  const filtersByParty: Record<string, unknown> = {};
+  for (const party of parties) {
+    filtersByParty[party] = { cumulative };
+  }
+  return { filtersByParty };
+}
+
 export function toLegacyEvents(events: Array<Record<string, unknown>>) {
   return events.map((event) => {
     const created = event.CreatedEvent as Record<string, unknown> | undefined;

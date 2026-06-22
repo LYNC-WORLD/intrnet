@@ -38,6 +38,29 @@ export const addObligations = asyncHandler(async (req: Request, res: Response) =
 
 export const compute = asyncHandler(async (req: Request, res: Response) => {
   const contractId = String(req.params.contractId);
-  const result = await cyclesService.computeCyclePositions(contractId);
-  return res.json({ success: true, data: result });
+  const { ackDeadline } = req.body as { ackDeadline?: string };
+  const result = await cyclesService.computeCyclePositions(contractId, ackDeadline);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
+export const settle = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const result = await cyclesService.settleCycle(contractId);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
+export const forceSettle = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const result = await cyclesService.forceSettleCycle(contractId);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
+export const close = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const result = await cyclesService.closeCycle(contractId);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
 });

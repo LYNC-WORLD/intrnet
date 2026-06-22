@@ -1,0 +1,19 @@
+module Intrnet.NetPosition where
+
+template NetPosition
+  with
+    participant : Party
+    cycleId : Text
+    operator : Party
+    netAmountSettlement : Decimal
+    settlementCurrency : Text
+    status : Text
+  where
+    signatory operator
+    observer participant
+
+    choice AcknowledgePosition : ContractId NetPosition
+      controller participant
+      do
+        assertMsg "Only PENDING positions can be acknowledged" (status == "PENDING")
+        create this with status = "ACKNOWLEDGED"

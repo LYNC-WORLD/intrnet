@@ -21,12 +21,16 @@ type LedgerEvent = {
   };
 };
 
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
 export async function startEventProcessor() {
-  const client = operatorClient();
+  const client = await operatorClient();
   const stream = await client.stream(
     Object.values(T),
     handleEvents,
-    (err) => console.error("[EventProcessor] stream error:", err),
+    (err) => console.warn("[EventProcessor]", err.message),
   );
   console.log("[EventProcessor] streaming ledger events...");
   return stream;
@@ -63,6 +67,8 @@ async function onCreated(event: LedgerEvent["created"]) {
   }
 
   if (templateId.includes("NettingCycle")) {
+    const settlementPhase = String(p.settlementPhase ?? "NOT_SETTLED");
+    const settledAt = settlementPhase === "SETTLED" ? new Date() : null;
     await prisma.nettingCycle.upsert({
       where: { cycleId: p.cycleId },
       create: {
@@ -73,13 +79,36 @@ async function onCreated(event: LedgerEvent["created"]) {
         status: p.status,
         cutoffTime: new Date(p.cutoffTime),
         agreementId: p.agreementId,
+        ackDeadline: p.ackDeadline ? new Date(p.ackDeadline) : null,
+        positionContractIds: asStringArray(p.positionCids),
+        settlementInstructionContractIds: asStringArray(p.settlementInstructionCids),
+        settlementPhase,
+        forceSettled: Boolean(p.forceSettled),
+        settledAt,
       },
       update: {
         contractId,
         status: p.status,
         cutoffTime: new Date(p.cutoffTime),
+        ackDeadline: p.ackDeadline ? new Date(p.ackDeadline) : null,
+        positionContractIds: asStringArray(p.positionCids),
+        settlementInstructionContractIds: asStringArray(p.settlementInstructionCids),
+        settlementPhase,
+        forceSettled: Boolean(p.forceSettled),
+        settledAt,
       },
     });
+
+    if (Boolean(p.forceSettled)) {
+      await recordAuditEvent({
+        eventType: "Cycle Force Settled",
+        actorPartyId: p.operator,
+        contractId,
+        templateId,
+        payload: p,
+        cycleId: p.cycleId,
+      });
+    }
   }
 
   if (templateId.includes("NettingAgreement")) {
@@ -118,8 +147,12 @@ async function onCreated(event: LedgerEvent["created"]) {
         currency: p.currency,
         cycleId: p.cycleId,
         status: p.status,
+        failureReason: p.failureReason ? String(p.failureReason) : null,
       },
-      update: { status: p.status },
+      update: {
+        status: p.status,
+        failureReason: p.failureReason ? String(p.failureReason) : null,
+      },
     });
   }
 
@@ -183,7 +216,11 @@ async function onArchived(event: LedgerEvent["archived"]) {
     data: { status: "REJECTED" },
   });
   await prisma.netPosition.updateMany({
-    where: { contractId, status: "PENDING" },
+    where: { contractId },
+    data: { status: "ARCHIVED" },
+  });
+  await prisma.settlementInstruction.updateMany({
+    where: { contractId },
     data: { status: "ARCHIVED" },
   });
 

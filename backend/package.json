@@ -1,5 +1,5 @@
 {
-  "name": "net-clear-backend",
+  "name": "intrnet-backend",
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
@@ -13,15 +13,14 @@
   "dependencies": {
     "@prisma/client": "^6.9.0",
     "axios": "^1.9.0",
-    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "jose": "^6.1.0",
     "node-cron": "^4.1.0"
   },
   "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.2",
     "@types/jsonwebtoken": "^9.0.10",

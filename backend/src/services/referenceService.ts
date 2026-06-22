@@ -30,7 +30,8 @@ export async function getAgreement(agreementId: string) {
   const resolution = await resolveAgreementContractId(agreementId);
   if ("error" in resolution) return resolution;
 
-  const agreement = await operatorClient().fetchById(resolution.data);
+  const client = await operatorClient();
+  const agreement = await client.fetchById(resolution.data);
   if (!agreement) return { error: "Agreement not found", status: 404 as const };
 
   return {

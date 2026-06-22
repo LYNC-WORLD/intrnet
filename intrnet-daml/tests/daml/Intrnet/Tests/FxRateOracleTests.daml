@@ -1,0 +1,33 @@
+module Intrnet.Tests.FxRateOracleTests where
+
+import Daml.Script
+import Intrnet.FxRateOracle
+import Intrnet.Tests.TestUtils
+
+testGetRate : Script ()
+testGetRate = do
+  parties <- allocateTestParties
+  oracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  rate <- submit parties.operator do
+    exerciseCmd oracleCid GetRate
+  assert (rate == 1.10)
+
+testUpdateRate : Script ()
+testUpdateRate = do
+  parties <- allocateTestParties
+  oracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  newCid <- submit parties.operator do
+    exerciseCmd oracleCid UpdateRate with
+      newRate = 1.15
+      newAsOf = testNow
+  Some oracle <- queryContractId parties.operator newCid
+  assert (oracle.rate == 1.15)
+
+testUpdateRateMustBePositive : Script ()
+testUpdateRateMustBePositive = do
+  parties <- allocateTestParties
+  oracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  submitMustFail parties.operator do
+    exerciseCmd oracleCid UpdateRate with
+      newRate = 0.0
+      newAsOf = testNow

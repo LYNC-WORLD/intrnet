@@ -1,9 +1,9 @@
 export const T = {
-  FxRateOracle: "NetClear.FxRateOracle:FxRateOracle",
-  NettingAgreement: "NetClear.NettingAgreement:NettingAgreement",
-  Obligation: "NetClear.Obligation:Obligation",
-  NettingCycle: "NetClear.NettingCycle:NettingCycle",
-  NetPosition: "NetClear.NetPosition:NetPosition",
-  SettlementInstruction: "NetClear.SettlementInstruction:SettlementInstruction",
-  CashAccount: "NetClear.CashAccount:CashAccount",
+  FxRateOracle: "Intrnet.FxRateOracle:FxRateOracle",
+  NettingAgreement: "Intrnet.NettingAgreement:NettingAgreement",
+  Obligation: "Intrnet.Obligation:Obligation",
+  NettingCycle: "Intrnet.NettingCycle:NettingCycle",
+  NetPosition: "Intrnet.NetPosition:NetPosition",
+  SettlementInstruction: "Intrnet.SettlementInstruction:SettlementInstruction",
+  CashAccount: "Intrnet.CashAccount:CashAccount",
 } as const;

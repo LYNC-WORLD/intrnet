@@ -1,9 +1,0 @@
-name: netclear-tests
-version: 1.0.0
-source: daml
-dependencies:
-  - daml-prim
-  - daml-stdlib
-  - daml-script
-data-dependencies:
-  - ../contracts/.daml/dist/netclear-contracts-1.0.0.dar
