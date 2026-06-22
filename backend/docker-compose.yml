@@ -3,10 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        PORT: ${PORT:-3001}
     container_name: intrnet-backend
     restart: unless-stopped
     ports:
-      - "3001:3001"
+      - "${PORT:-3001}:${PORT:-3001}"
     env_file:
       - .env
     extra_hosts:

@@ -21,7 +21,9 @@ FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
+ARG PORT=3001
 ENV NODE_ENV=production
+ENV PORT=${PORT}
 
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
@@ -32,6 +34,6 @@ RUN npm ci --omit=dev \
 
 COPY --from=builder /app/dist ./dist
 
-EXPOSE 3001
+EXPOSE ${PORT}
 
 CMD ["node", "dist/index.js"]
