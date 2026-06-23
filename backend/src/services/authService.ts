@@ -53,7 +53,6 @@ export async function oauthLogin(oauthToken: string) {
     return { error: err instanceof Error ? err.message : "Invalid OAuth token", status: 401 as const };
   }
 
-  let isNewUser = false;
   let user = await prisma.user.findUnique({ where: { oauthSub: identity.sub } });
 
   if (!user) {
@@ -68,7 +67,6 @@ export async function oauthLogin(oauthToken: string) {
   }
 
   if (!user) {
-    isNewUser = true;
     user = await prisma.user.create({
       data: {
         email: identity.email ?? placeholderEmailFromSub(identity.sub),
@@ -93,6 +91,9 @@ export async function oauthLogin(oauthToken: string) {
     where: { userId: user.id },
     select: { id: true, state: true },
   });
+
+  const isNewUser =
+    user.role === "operator" ? false : onboardingRequest === null;
 
   return {
     data: {
