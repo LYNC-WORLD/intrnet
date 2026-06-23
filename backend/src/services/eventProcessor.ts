@@ -158,7 +158,12 @@ async function onCreated(event: LedgerEvent["created"]) {
 
   if (templateId.includes("FxRateOracle")) {
     await prisma.fxRate.upsert({
-      where: { contractId },
+      where: {
+        fromCurrency_toCurrency: {
+          fromCurrency: p.fromCurrency,
+          toCurrency: p.toCurrency,
+        },
+      },
       create: {
         contractId,
         fromCurrency: p.fromCurrency,
@@ -167,6 +172,7 @@ async function onCreated(event: LedgerEvent["created"]) {
         asOf: new Date(p.asOf),
       },
       update: {
+        contractId,
         rate: parseFloat(p.rate),
         asOf: new Date(p.asOf),
       },
