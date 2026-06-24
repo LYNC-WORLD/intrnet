@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+export const passwordEmailTemplate = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -84,7 +84,7 @@
         background:#11151D;
         border:1px solid #232833;
         border-radius:12px;
-        margin:30px 0;
+        margin: 2px 0;
       ">
         <tr>
           <td style="padding:24px;">
@@ -128,17 +128,17 @@
         </tr>
       </table>
 
-      <p style="
+      <!-- <p style="
         color:#9CA3AF;
         font-size:15px;
         line-height:1.7;
       ">
         For security reasons, you will be asked to change your password after
         your first login.
-      </p>
+      </p> -->
 
       <!-- Button -->
-      <table cellpadding="0" cellspacing="0" style="margin-top:30px;">
+      <!-- <table cellpadding="0" cellspacing="0" style="margin-top:30px;">
         <tr>
           <td style="
             background:#D9F14A;
@@ -159,7 +159,7 @@
             </a>
           </td>
         </tr>
-      </table>
+      </table> -->
 
     </td>
   </tr>
@@ -188,4 +188,4 @@
 </table>
 
 </body>
-</html>
+</html>`

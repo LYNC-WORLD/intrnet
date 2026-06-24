@@ -1,6 +1,7 @@
 import { PasswordMailPayload } from "../types";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import { passwordEmailTemplate } from "./password-template";
 
 dotenv.config();
 
@@ -16,29 +17,18 @@ const transporter = nodemailer.createTransport({
 
 async function sendEmail(to: string, subject: string, html: string) {
   const info = await transporter.sendMail({
-    from: `"NetClear" <${process.env.SMTP_USER}>`,
+    from: `"Intrnet" <${process.env.SMTP_USER}>`,
     to,
     subject,
     html,
   });
 }
 
-async function sendPasswordEmail(data:PasswordMailPayload) {
-    const html = welcomeTemplate(data.name);
-    const to = data.email;
-    await sendEmail(to, "Welcome Email!!!", html);
+export async function sendPasswordEmail(data: PasswordMailPayload) {
+  const html = passwordEmailTemplate
+    .replace(/{{name}}/g, data.name)
+    .replace(/{{email}}/g, data.email)
+    .replace(/{{password}}/g, data.password);
+  const to = data.email;
+  await sendEmail(to, "Temporary password", html);
 }
-function welcomeTemplate(name: string) {
-  return `
-    <h1>Welcome ${name}</h1>
-    <p>Thanks for joining NetClear.</p>
-  `;
-}
-
-const passwordMailData: PasswordMailPayload = {
-    email: "vaibhav03joshi@gmail.com",
-    name: "Vaibhav Joshi",
-    password: "Anshu!1@2#3$4"
-}
-
-sendPasswordEmail(passwordMailData);
