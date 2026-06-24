@@ -10,15 +10,36 @@ generator client {
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
-  passwordHash String?
-  partyId      String   @unique
+  oauthProvider String?
+  oauthSub     String?  @unique
+  partyId      String?  @unique
   ledgerUserId String?  @unique
-  partyToken   String
+  agreementId  String?
+  agreementContractId String?
   role         String
-  companyName  String
-  status       String   @default("ACTIVE")
+  companyName  String?
+  status       String   @default("PENDING")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  onboardingRequest OnboardingRequest?
+
+  @@index([agreementId])
+}
+
+model OnboardingRequest {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName      String
+  contactName      String?
+  phone            String?
+  country          String?
+  partyHint        String?
+  state            String   @default("DRAFT")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([state])
 }
 
 model Obligation {
@@ -38,6 +59,18 @@ model Obligation {
   @@index([payer])
   @@index([receiver])
   @@index([status])
+  @@index([agreementId])
+}
+
+model NettingAgreement {
+  id                 String   @id @default(cuid())
+  agreementId        String   @unique
+  contractId         String   @unique
+  operator           String
+  settlementCurrency String
+  participants       Json
+  agreementDate      DateTime
+  updatedAt          DateTime @updatedAt
 }
 
 model NettingCycle {
@@ -49,6 +82,12 @@ model NettingCycle {
   status             String
   cutoffTime         DateTime
   agreementId        String
+  ackDeadline        DateTime?
+  positionContractIds Json         @default("[]")
+  settlementInstructionContractIds Json @default("[]")
+  settlementPhase    String        @default("NOT_SETTLED")
+  forceSettled       Boolean       @default(false)
+  settledAt          DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   positions          NetPosition[]
@@ -82,6 +121,7 @@ model SettlementInstruction {
   currency   String
   cycleId    String
   status     String
+  failureReason String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

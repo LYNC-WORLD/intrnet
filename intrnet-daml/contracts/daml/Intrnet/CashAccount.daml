@@ -1,0 +1,30 @@
+module Intrnet.CashAccount where
+
+template CashAccount
+  with
+    owner : Party
+    currency : Text
+    balance : Decimal
+    operator : Party
+  where
+    signatory operator
+    observer owner
+
+    ensure balance >= 0.0
+
+    choice Credit : ContractId CashAccount
+      with
+        creditAmount : Decimal
+      controller operator
+      do
+        assertMsg "Credit amount must be positive" (creditAmount > 0.0)
+        create this with balance = balance + creditAmount
+
+    choice Debit : ContractId CashAccount
+      with
+        debitAmount : Decimal
+      controller operator
+      do
+        assertMsg "Debit amount must be positive" (debitAmount > 0.0)
+        assertMsg "Insufficient balance" (balance >= debitAmount)
+        create this with balance = balance - debitAmount

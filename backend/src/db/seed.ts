@@ -1,35 +1,41 @@
-import "dotenv/config";
-import bcrypt from "bcrypt";
+import "../env";
 import { prisma } from "./index";
+import { getOperatorPartyId } from "../ledger/operatorParty";
 
 async function main() {
-  const email = process.env.OPERATOR_EMAIL ?? "operator@netclear.local";
-  const password = process.env.OPERATOR_PASSWORD ?? "operator123";
-  const passwordHash = await bcrypt.hash(password, 10);
+  const email = process.env.OPERATOR_EMAIL ?? "operator@intrnet.local";
+  const oauthSub = process.env.OPERATOR_OAUTH_SUB?.trim() || null;
+
+  let partyId = process.env.OPERATOR_PARTY ?? "operator";
+  try {
+    partyId = await getOperatorPartyId();
+  } catch (err) {
+    console.warn("[Seed] Could not resolve operator party on ledger, using OPERATOR_PARTY env:", err);
+  }
 
   await prisma.user.upsert({
     where: { email },
     update: {
-      passwordHash,
       role: "operator",
       status: "ACTIVE",
-      companyName: "NetClear Operator",
-      partyId: process.env.OPERATOR_PARTY ?? "operator",
-      partyToken: process.env.OPERATOR_JWT ?? "operator-jwt-not-set",
+      companyName: "Intrnet Operator",
+      partyId,
+      ...(oauthSub ? { oauthSub } : {}),
     },
     create: {
       email,
-      passwordHash,
       role: "operator",
       status: "ACTIVE",
-      companyName: "NetClear Operator",
-      partyId: process.env.OPERATOR_PARTY ?? "operator",
-      partyToken: process.env.OPERATOR_JWT ?? "operator-jwt-not-set",
-      ledgerUserId: process.env.OPERATOR_LEDGER_USER_ID ?? "netclear-operator",
+      companyName: "Intrnet Operator",
+      partyId,
+      oauthSub,
+      ledgerUserId: process.env.OPERATOR_LEDGER_USER_ID ?? null,
     },
   });
 
-  console.log(`Seeded operator user: ${email}`);
+  console.log(
+    `Seeded operator user: ${email} (partyId: ${partyId}${oauthSub ? `, oauthSub: ${oauthSub}` : ""})`,
+  );
 }
 
 main()

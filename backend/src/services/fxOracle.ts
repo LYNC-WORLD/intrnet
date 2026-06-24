@@ -67,7 +67,7 @@ export async function refreshFxRates() {
     }
 
     const rates = extractRates(data);
-    const client = operatorClient();
+    const client = await operatorClient();
     const operatorPartyId = await getOperatorPartyId();
     const now = data.time_last_update_utc
       ? new Date(data.time_last_update_utc).toISOString()

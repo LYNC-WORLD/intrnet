@@ -1,0 +1,26 @@
+module Intrnet.FxRateOracle where
+
+template FxRateOracle
+  with
+    operator : Party
+    fromCurrency : Text
+    toCurrency : Text
+    rate : Decimal
+    asOf : Time
+  where
+    signatory operator
+
+    nonconsuming choice GetRate : Decimal
+      controller operator
+      do return rate
+
+    choice UpdateRate : ContractId FxRateOracle
+      with
+        newRate : Decimal
+        newAsOf : Time
+      controller operator
+      do
+        assertMsg "Rate must be positive" (newRate > 0.0)
+        create this with
+          rate = newRate
+          asOf = newAsOf

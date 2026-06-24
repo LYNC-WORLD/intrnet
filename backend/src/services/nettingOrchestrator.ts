@@ -2,13 +2,13 @@ import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
 
-export async function bulkAddObligations(cycleCid: string, cycleId: string) {
-  const client = operatorClient();
+export async function bulkAddObligations(cycleCid: string, cycleId: string, agreementId: string) {
+  const client = await operatorClient();
   const current = await client.fetchById(cycleCid);
   if (!current) throw new Error("NettingCycle contract not found");
 
   const accepted = await prisma.obligation.findMany({
-    where: { status: "ACCEPTED" },
+    where: { status: "ACCEPTED", agreementId },
   });
 
   let latestCycleCid = cycleCid;
@@ -36,8 +36,8 @@ export async function bulkAddObligations(cycleCid: string, cycleId: string) {
   return latestCycleCid;
 }
 
-export async function computeNetPositions(cycleCid: string) {
-  const client = operatorClient();
+export async function computeNetPositions(cycleCid: string, ackDeadline: string) {
+  const client = await operatorClient();
   const fxOracles = await client.query(T.FxRateOracle);
 
   const fxRateCids: [string, string][] = fxOracles.map((o) => [
@@ -49,6 +49,6 @@ export async function computeNetPositions(cycleCid: string) {
     templateId: T.NettingCycle,
     contractId: cycleCid,
     choice: "ComputeNetPositions",
-    argument: { fxRateCids },
+    argument: { fxRateCids, ackDeadline },
   });
 }

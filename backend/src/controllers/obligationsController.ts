@@ -4,12 +4,17 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { isServiceError, sendServiceError } from "../utils/http";
 
 export const list = asyncHandler(async (req: Request, res: Response) => {
-  const { partyId, role: userRole } = req.user;
-  const { status, role, currency, page = "1", limit = "20" } = req.query as Record<string, string>;
+  const { partyId, role: userRole, agreementId: userAgreementId } = req.user;
+  const { status, role, currency, agreementId, page = "1", limit = "20" } = req.query as Record<
+    string,
+    string
+  >;
 
   const result = await obligationsService.listObligations({
     partyId,
     userRole,
+    userAgreementId,
+    agreementId,
     status,
     role,
     currency,
@@ -29,11 +34,13 @@ export const getById = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const { partyId, token } = req.user;
+  const { partyId, token, role: userRole, agreementId: userAgreementId } = req.user;
   const { receiver, amount, currency, description, invoiceRef, agreementId } = req.body;
   const result = await obligationsService.createObligation({
     token,
     partyId,
+    userRole,
+    userAgreementId,
     receiver,
     amount,
     currency,

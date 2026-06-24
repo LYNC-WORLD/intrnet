@@ -1,0 +1,24 @@
+module Intrnet.SettlementLogic where
+
+type PartyNet = (Party, Decimal)
+
+generateSettlementPairs : [PartyNet] -> [(Party, Party, Decimal)]
+generateSettlementPairs nets =
+  let payers = map (\(party, net) -> (party, negate net)) $ filter (\(_, net) -> net < 0.0) nets
+      receivers = map (\(party, net) -> (party, net)) $ filter (\(_, net) -> net > 0.0) nets
+  in greedySettle payers receivers
+
+greedySettle : [(Party, Decimal)] -> [(Party, Decimal)] -> [(Party, Party, Decimal)]
+greedySettle [] _ = []
+greedySettle _ [] = []
+greedySettle ((payer, payerAmt) :: payers) ((receiver, receiverAmt) :: receivers)
+  | payerAmt <= 0.0 = greedySettle payers ((receiver, receiverAmt) :: receivers)
+  | receiverAmt <= 0.0 = greedySettle ((payer, payerAmt) :: payers) receivers
+  | otherwise =
+      let settled = min payerAmt receiverAmt
+          nextPayers = if payerAmt > settled then (payer, payerAmt - settled) :: payers else payers
+          nextReceivers =
+            if receiverAmt > settled
+              then (receiver, receiverAmt - settled) :: receivers
+              else receivers
+      in (payer, receiver, settled) :: greedySettle nextPayers nextReceivers

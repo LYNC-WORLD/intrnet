@@ -3,8 +3,10 @@ import * as cyclesService from "../services/cyclesService";
 import { asyncHandler } from "../utils/asyncHandler";
 import { isServiceError, sendServiceError } from "../utils/http";
 
-export const list = asyncHandler(async (_req: Request, res: Response) => {
-  const cycles = await cyclesService.listCycles();
+export const list = asyncHandler(async (req: Request, res: Response) => {
+  const { role, agreementId: userAgreementId } = req.user;
+  const { agreementId } = req.query as Record<string, string>;
+  const cycles = await cyclesService.listCycles(role, userAgreementId, agreementId);
   return res.json({ success: true, data: cycles });
 });
 
@@ -16,8 +18,14 @@ export const getById = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const start = asyncHandler(async (req: Request, res: Response) => {
-  const { cycleId, cutoffTime, agreementContractId } = req.body;
-  const result = await cyclesService.startCycle(cycleId, cutoffTime, agreementContractId);
+  const { cycleId, cutoffTime, agreementId, agreementContractId } = req.body;
+  const result = await cyclesService.startCycle(
+    cycleId,
+    cutoffTime,
+    agreementId,
+    agreementContractId,
+  );
+  if (isServiceError(result)) return sendServiceError(res, result);
   return res.status(201).json({ success: true, data: result });
 });
 
@@ -30,6 +38,29 @@ export const addObligations = asyncHandler(async (req: Request, res: Response) =
 
 export const compute = asyncHandler(async (req: Request, res: Response) => {
   const contractId = String(req.params.contractId);
-  const result = await cyclesService.computeCyclePositions(contractId);
-  return res.json({ success: true, data: result });
+  const { ackDeadline } = req.body as { ackDeadline?: string };
+  const result = await cyclesService.computeCyclePositions(contractId, ackDeadline);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
+export const settle = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const result = await cyclesService.settleCycle(contractId);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
+export const forceSettle = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const result = await cyclesService.forceSettleCycle(contractId);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
+export const close = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const result = await cyclesService.closeCycle(contractId);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
 });

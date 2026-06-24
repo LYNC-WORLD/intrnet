@@ -1,13 +1,13 @@
 import { Router } from "express";
 import * as obligationsController from "../controllers/obligationsController";
-import { authenticateJWT } from "../middleware/auth";
+import { authenticateOAuth, requireActiveUser } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/", authenticateJWT, obligationsController.list);
-router.get("/:contractId", authenticateJWT, obligationsController.getById);
-router.post("/", authenticateJWT, obligationsController.create);
-router.post("/:contractId/accept", authenticateJWT, obligationsController.accept);
-router.post("/:contractId/reject", authenticateJWT, obligationsController.reject);
+router.get("/", authenticateOAuth, requireActiveUser, obligationsController.list);
+router.get("/:contractId", authenticateOAuth, requireActiveUser, obligationsController.getById);
+router.post("/", authenticateOAuth, requireActiveUser, obligationsController.create);
+router.post("/:contractId/accept", authenticateOAuth, requireActiveUser, obligationsController.accept);
+router.post("/:contractId/reject", authenticateOAuth, requireActiveUser, obligationsController.reject);
 
 export default router;

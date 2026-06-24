@@ -1,0 +1,45 @@
+module Intrnet.SettlementInstruction where
+
+import Intrnet.CashAccount
+
+template SettlementInstruction
+  with
+    payer : Party
+    receiver : Party
+    amount : Decimal
+    currency : Text
+    cycleId : Text
+    operator : Party
+    status : Text
+  where
+    signatory operator
+    observer [payer, receiver]
+
+    ensure amount > 0.0
+
+    choice ExecuteSettlement : ContractId SettlementInstruction
+      with
+        payerAcctCid : ContractId CashAccount
+        receiverAcctCid : ContractId CashAccount
+      controller operator
+      do
+        assertMsg "Instruction must be PENDING to execute" (status == "PENDING")
+        assertMsg "Payer and receiver accounts must be different" (payerAcctCid /= receiverAcctCid)
+        payerAcct <- fetch payerAcctCid
+        assertMsg "Payer account owner must match payer" (payerAcct.owner == payer)
+        assertMsg "Payer account operator must match instruction operator" (payerAcct.operator == operator)
+        assertMsg "Payer account currency must match" (payerAcct.currency == currency)
+        assertMsg "Insufficient payer balance" (payerAcct.balance >= amount)
+        receiverAcct <- fetch receiverAcctCid
+        assertMsg "Receiver account owner must match receiver" (receiverAcct.owner == receiver)
+        assertMsg "Receiver account operator must match instruction operator" (receiverAcct.operator == operator)
+        assertMsg "Receiver account currency must match" (receiverAcct.currency == currency)
+        exercise payerAcctCid Debit with debitAmount = amount
+        exercise receiverAcctCid Credit with creditAmount = amount
+        create this with status = "EXECUTED"
+
+    choice ConfirmReceipt : ContractId SettlementInstruction
+      controller receiver
+      do
+        assertMsg "Instruction must be EXECUTED before confirmation" (status == "EXECUTED")
+        create this with status = "CONFIRMED"

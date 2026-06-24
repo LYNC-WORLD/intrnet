@@ -1,0 +1,229 @@
+module Intrnet.Tests.NettingCycleGateTests where
+
+-- Verbose regression tests for Phase 4 ledger gates on NettingCycle:
+-- ComputeNetPositions (consuming + ackDeadline), SettleCycle, ForceSettleCycle, CloseCycle.
+
+import Daml.Script
+import Intrnet.NettingCycle
+import Intrnet.NetPosition
+import Intrnet.SettlementInstruction
+import Intrnet.Tests.TestUtils
+import DA.Time (addRelTime, seconds)
+import DA.Foldable (forA_)
+
+-- | After compute, cycle records ackDeadline, positionCids, NOT_SETTLED phase, and no instructions.
+testComputeNetPositionsRecordsGateFields : Script ()
+testComputeNetPositionsRecordsGateFields = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-COMPUTE-FIELDS"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 2500.0 "EUR"
+  Some cycle <- queryContractId parties.operator computedCycleCid
+
+  assertMsg "Cycle must remain OPEN after compute" (cycle.status == "OPEN")
+  assertMsg "ackDeadline must be set on cycle after compute" (cycle.ackDeadline /= None)
+  assertMsg "positionCids must be populated after compute" (length cycle.positionCids == 3)
+  assertMsg "settlementPhase must be NOT_SETTLED after compute" (cycle.settlementPhase == "NOT_SETTLED")
+  assertMsg "forceSettled must be false after compute" (not cycle.forceSettled)
+  assertMsg "No settlement instructions before settle" (null cycle.settlementInstructionCids)
+
+  positions <- getPositionsForCycle parties.operator cycleId
+  assertMsg "One net position per participant" (length positions == 3)
+  forA_ positions $ \(_, pos) -> do
+    assertMsg "Computed positions start as PENDING" (pos.status == "PENDING")
+    assertMsg "Position cycleId must match parent cycle" (pos.cycleId == cycleId)
+
+-- | Settle after all acknowledgements creates instructions and marks cycle SETTLED (not force-settled).
+testSettleCycleHappyPathCreatesInstructions : Script ()
+testSettleCycleHappyPathCreatesInstructions = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-SETTLE-HAPPY"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 1000.0 "EUR"
+  ackedCids <- acknowledgeAllPositionsForCycle parties cycleId
+  assertMsg "All three participants must be acknowledged" (length ackedCids == 3)
+
+  settledCid <- submit parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = ackedCids
+  Some settledCycle <- queryContractId parties.operator settledCid
+
+  assertMsg "settlementPhase must become SETTLED" (settledCycle.settlementPhase == "SETTLED")
+  assertMsg "Normal settle must not set forceSettled" (not settledCycle.forceSettled)
+  assertMsg "Settle must create at least one instruction" (not (null settledCycle.settlementInstructionCids))
+
+  let instructionCid =
+        expectOne "Expected one settlement instruction for two-party net" $
+          settledCycle.settlementInstructionCids
+  Some instruction <- queryContractId parties.operator instructionCid
+  assertMsg "Instruction payer must be net debtor" (instruction.payer == parties.companyA)
+  assertMsg "Instruction receiver must be net creditor" (instruction.receiver == parties.companyB)
+  assertMsg "Instruction amount must match converted net (1000 EUR * 1.10)" (instruction.amount == 1100.0)
+  assertMsg "Instruction must start PENDING" (instruction.status == "PENDING")
+  assertMsg "Instruction cycleId must match parent cycle" (instruction.cycleId == cycleId)
+
+-- | Partial acknowledgement blocks SettleCycle even when stale pending cids are supplied.
+testSettleCycleFailsWithPartialAcknowledgement : Script ()
+testSettleCycleFailsWithPartialAcknowledgement = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-SETTLE-PARTIAL-ACK"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 500.0 "EUR"
+
+  positions <- getPositionsForCycle parties.operator cycleId
+  let (posACid, _) =
+        expectOne "Expected net position for company A" $
+          filter (\(_, pos) -> pos.participant == parties.companyA) positions
+  _ <- submit parties.companyA do
+    exerciseCmd posACid AcknowledgePosition
+
+  mixedCids <- getPositionCidsForCycle parties.operator cycleId
+  assertMsg "Mixed pending/acknowledged cids should still be present" (length mixedCids == 3)
+
+  submitMustFail parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = mixedCids
+
+-- | Using pre-acknowledgement position contract ids must fail even if all parties later ack.
+testSettleCycleFailsWithStalePositionCids : Script ()
+testSettleCycleFailsWithStalePositionCids = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-SETTLE-STALE-CIDS"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 750.0 "EUR"
+  staleCids <- getPositionCidsForCycle parties.operator cycleId
+  _ <- acknowledgeAllPositionsForCycle parties cycleId
+
+  submitMustFail parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = staleCids
+
+-- | Force-settle before ackDeadline is rejected by ledger time gate.
+testForceSettleFailsBeforeAckDeadline : Script ()
+testForceSettleFailsBeforeAckDeadline = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-FORCE-BEFORE-DEADLINE"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 900.0 "EUR"
+  positionCids <- getPositionCidsForCycle parties.operator cycleId
+
+  submitMustFail parties.operator do
+    exerciseCmd computedCycleCid ForceSettleCycle with positionCids = positionCids
+
+-- | After deadline, force-settle succeeds with pending positions and sets forceSettled.
+testForceSettleAfterDeadlineWithPendingPositions : Script ()
+testForceSettleAfterDeadlineWithPendingPositions = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-FORCE-AFTER-DEADLINE"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 1200.0 "EUR"
+  pendingCids <- getPendingPositionCids parties.operator cycleId
+  assertMsg "No acknowledgements should exist before force-settle" (length pendingCids == 3)
+
+  setTime (addRelTime ackDeadlineOneHour (seconds 1))
+
+  forceSettledCid <- submit parties.operator do
+    exerciseCmd computedCycleCid ForceSettleCycle with positionCids = pendingCids
+  Some forceSettledCycle <- queryContractId parties.operator forceSettledCid
+
+  assertMsg "Force settle must mark cycle SETTLED" (forceSettledCycle.settlementPhase == "SETTLED")
+  assertMsg "Force settle must set forceSettled flag" forceSettledCycle.forceSettled
+  assertMsg "Force settle must create settlement instructions" (not (null forceSettledCycle.settlementInstructionCids))
+
+  positionsAfter <- getPositionsForCycle parties.operator cycleId
+  let pendingAfter = filter (\(_, pos) -> pos.status == "PENDING") positionsAfter
+  assertMsg "Pending positions remain PENDING after force-settle (deemed ack)" (length pendingAfter == 3)
+
+-- | Close is blocked until settlement phase completes.
+testCloseCycleFailsBeforeSettle : Script ()
+testCloseCycleFailsBeforeSettle = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-CLOSE-BEFORE-SETTLE"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 300.0 "USD"
+  _ <- acknowledgeAllPositionsForCycle parties cycleId
+
+  submitMustFail parties.operator do
+    exerciseCmd computedCycleCid CloseCycle with settlementInstructionCids = []
+
+-- | Close is blocked when instructions are EXECUTED but not yet CONFIRMED.
+testCloseCycleFailsWithExecutedNotConfirmed : Script ()
+testCloseCycleFailsWithExecutedNotConfirmed = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-CLOSE-EXECUTED-NOT-CONFIRMED"
+  _ <- seedCashAccount parties.operator parties.companyA "USD" 50000.0
+  _ <- seedCashAccount parties.operator parties.companyB "USD" 50000.0
+
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 1000.0 "USD"
+  ackedCids <- acknowledgeAllPositionsForCycle parties cycleId
+  settledCid <- submit parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = ackedCids
+  Some settledCycle <- queryContractId parties.operator settledCid
+  let instructionCid =
+        expectOne "Expected settlement instruction" settledCycle.settlementInstructionCids
+
+  payerAcctCid <- findCashAccountCid parties.operator parties.companyA "USD"
+  receiverAcctCid <- findCashAccountCid parties.operator parties.companyB "USD"
+  executedCid <- submit parties.operator do
+    exerciseCmd instructionCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+  Some executed <- queryContractId parties.operator executedCid
+  assertMsg "Instruction must be EXECUTED before close attempt" (executed.status == "EXECUTED")
+
+  submitMustFail parties.operator do
+    exerciseCmd settledCid CloseCycle with settlementInstructionCids = [executedCid]
+
+-- | Second settle attempt on an already SETTLED cycle must fail.
+testSettleCycleCannotRunTwice : Script ()
+testSettleCycleCannotRunTwice = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-SETTLE-TWICE"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 400.0 "USD"
+  ackedCids <- acknowledgeAllPositionsForCycle parties cycleId
+  settledCid <- submit parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = ackedCids
+
+  submitMustFail parties.operator do
+    exerciseCmd settledCid SettleCycle with positionCids = ackedCids
+
+-- | Re-computing positions after settle must fail (settlementPhase gate).
+testComputeFailsAfterSettle : Script ()
+testComputeFailsAfterSettle = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-COMPUTE-AFTER-SETTLE"
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 600.0 "USD"
+  ackedCids <- acknowledgeAllPositionsForCycle parties cycleId
+  settledCid <- submit parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = ackedCids
+
+  submitMustFail parties.operator do
+    exerciseCmd settledCid ComputeNetPositions with
+      fxRateCids = []
+      ackDeadline = addRelTime testNow (seconds 7200)
+
+-- | Full gate flow: compute -> ack -> settle -> execute -> confirm -> close.
+testFullGateFlowComputeToClose : Script ()
+testFullGateFlowComputeToClose = do
+  parties <- allocateTestParties
+  let cycleId = "GATE-FULL-FLOW"
+  _ <- seedCashAccount parties.operator parties.companyA "USD" 100000.0
+  _ <- seedCashAccount parties.operator parties.companyB "USD" 100000.0
+
+  computedCycleCid <- setupCycleWithSingleObligation parties cycleId 2000.0 "USD"
+  Some computedCycle <- queryContractId parties.operator computedCycleCid
+  assertMsg "Pre-settle phase must be NOT_SETTLED" (computedCycle.settlementPhase == "NOT_SETTLED")
+
+  ackedCids <- acknowledgeAllPositionsForCycle parties cycleId
+  settledCid <- submit parties.operator do
+    exerciseCmd computedCycleCid SettleCycle with positionCids = ackedCids
+  Some settledCycle <- queryContractId parties.operator settledCid
+  assertMsg "Post-settle phase must be SETTLED" (settledCycle.settlementPhase == "SETTLED")
+
+  let instructionCid =
+        expectOne "Expected settlement instruction in full flow" $
+          settledCycle.settlementInstructionCids
+  payerAcctCid <- findCashAccountCid parties.operator parties.companyA "USD"
+  receiverAcctCid <- findCashAccountCid parties.operator parties.companyB "USD"
+  executedCid <- submit parties.operator do
+    exerciseCmd instructionCid ExecuteSettlement with
+      payerAcctCid
+      receiverAcctCid
+  confirmedCid <- submit parties.companyB do
+    exerciseCmd executedCid ConfirmReceipt
+
+  closedCid <- submit parties.operator do
+    exerciseCmd settledCid CloseCycle with settlementInstructionCids = [confirmedCid]
+  Some closedCycle <- queryContractId parties.operator closedCid
+  assertMsg "Cycle must be CLOSED after confirmed instructions" (closedCycle.status == "CLOSED")
+  assertMsg "Closed cycle retains SETTLED phase" (closedCycle.settlementPhase == "SETTLED")

@@ -1,9 +1,10 @@
 import { Router } from "express";
 import * as positionsController from "../controllers/positionsController";
-import { authenticateJWT } from "../middleware/auth";
+import { authenticateOAuth, requireActiveUser } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/", authenticateJWT, positionsController.list);
+router.get("/", authenticateOAuth, requireActiveUser, positionsController.list);
+router.post("/:contractId/acknowledge", authenticateOAuth, requireActiveUser, positionsController.acknowledge);
 
 export default router;

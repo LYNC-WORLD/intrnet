@@ -3,13 +3,13 @@ import * as authService from "../services/authService";
 import { asyncHandler } from "../utils/asyncHandler";
 import { isServiceError, sendServiceError } from "../utils/http";
 
-export const login = asyncHandler(async (req: Request, res: Response) => {
-  const { email, password } = req.body as { email?: string; password?: string };
-  if (!email || !password) {
-    return res.status(400).json({ error: "email and password are required" });
+export const oauthLogin = asyncHandler(async (req: Request, res: Response) => {
+  const { token } = req.body as { token?: string };
+  if (!token) {
+    return res.status(400).json({ error: "token is required" });
   }
 
-  const result = await authService.login(email, password);
+  const result = await authService.oauthLogin(token);
   if (isServiceError(result)) return sendServiceError(res, result);
   return res.json({ success: true, data: result.data });
 });

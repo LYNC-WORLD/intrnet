@@ -22,7 +22,8 @@ export async function createFxRate(params: {
 }) {
   const { fromCurrency, toCurrency, rate, asOf } = params;
   const operatorPartyId = await getOperatorPartyId();
-  return operatorClient().create({
+  const client = await operatorClient();
+  return client.create({
     templateId: T.FxRateOracle,
     payload: {
       operator: operatorPartyId,
@@ -35,7 +36,8 @@ export async function createFxRate(params: {
 }
 
 export async function updateFxRate(contractId: string, rate: number | string, asOf?: string) {
-  return operatorClient().exercise({
+  const client = await operatorClient();
+  return client.exercise({
     templateId: T.FxRateOracle,
     contractId,
     choice: "UpdateRate",
