@@ -12,9 +12,9 @@ import agreementsRouter from "./routes/agreements";
 import settlementRouter from "./routes/settlement";
 import operatorRouter from "./routes/operator";
 import onboardingRouter from "./routes/onboarding";
+import docsRouter from "./routes/docs";
 import { operatorClient } from "./ledger/client";
 import { bootstrapLedgerRights } from "./ledger/ledgerBootstrap";
-import { startEventProcessor } from "./services/eventProcessor";
 import { startFxOracleScheduler } from "./services/fxOracle";
 
 const app = express();
@@ -34,6 +34,7 @@ app.use("/api/fx-rates", fxRatesRouter);
 app.use("/api/agreements", agreementsRouter);
 app.use("/api/settlement", settlementRouter);
 app.use("/api/operator", operatorRouter);
+app.use("/api/docs", docsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -51,7 +52,6 @@ async function validateLedgerAccess() {
 async function main() {
   await validateLedgerAccess();
   app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
-  await startEventProcessor();
   startFxOracleScheduler();
 }
 

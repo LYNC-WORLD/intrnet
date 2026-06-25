@@ -1,7 +1,12 @@
-import { prisma } from "../db";
 import { partyClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
+import {
+  getAgreementById,
+  getObligation,
+  listObligations as pqsListObligations,
+} from "../repositories/pqsLedgerReadRepository";
+import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 
 export async function listObligations(params: {
   partyId: string;
@@ -14,34 +19,11 @@ export async function listObligations(params: {
   page: number;
   limit: number;
 }) {
-  const { partyId, userRole, userAgreementId, agreementId, status, role, currency, page, limit } = params;
-  const where: any = {};
-  if (userRole !== "operator") {
-    where.OR = [{ payer: partyId }, { receiver: partyId }];
-    if (userAgreementId) where.agreementId = userAgreementId;
-  } else if (agreementId) {
-    where.agreementId = agreementId;
-  }
-  if (status) where.status = status;
-  if (currency) where.currency = currency;
-  if (role === "payer") where.payer = partyId;
-  if (role === "receiver") where.receiver = partyId;
-
-  const [total, obligations] = await prisma.$transaction([
-    prisma.obligation.count({ where }),
-    prisma.obligation.findMany({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
-
-  return { obligations, total, page };
+  return pqsListObligations(params);
 }
 
-export async function getObligation(contractId: string, partyId: string, role: string) {
-  const obligation = await prisma.obligation.findUnique({ where: { contractId } });
+export async function getObligationSvc(contractId: string, partyId: string, role: string) {
+  const obligation = await getObligation(contractId);
   if (!obligation) return { error: "Obligation not found", status: 404 as const };
   if (role !== "operator" && obligation.payer !== partyId && obligation.receiver !== partyId) {
     return { error: "Not authorized for this obligation", status: 403 as const };
@@ -78,11 +60,11 @@ export async function createObligation(params: {
     throw new Error("agreementId is required");
   }
 
-  const agreement = await prisma.nettingAgreement.findUnique({ where: { agreementId } });
+  const agreement = await getAgreementById(agreementId);
   if (!agreement) {
     throw new Error("Agreement not found");
   }
-  const participants = Array.isArray(agreement.participants) ? (agreement.participants as string[]) : [];
+  const participants = agreement.participants;
   if (!participants.includes(partyId)) {
     throw new Error("Payer is not a participant in the selected agreement");
   }
@@ -91,7 +73,7 @@ export async function createObligation(params: {
   }
 
   const operatorPartyId = await getOperatorPartyId();
-  return partyClient(token).create({
+  const created = await partyClient(token).create({
     templateId: T.Obligation,
     payload: {
       payer: partyId,
@@ -106,10 +88,13 @@ export async function createObligation(params: {
       createdAt: new Date().toISOString(),
     },
   });
+
+  await auditLedgerCreate(T.Obligation, created.contractId, created.payload, partyId);
+  return created;
 }
 
 export async function acceptObligation(contractId: string, token: string, partyId: string) {
-  const obligation = await prisma.obligation.findUnique({ where: { contractId } });
+  const obligation = await getObligation(contractId);
   if (!obligation) return { error: "Obligation not found", status: 404 as const };
   if (obligation.receiver !== partyId) {
     return { error: "Only receiver can accept this obligation", status: 403 as const };
@@ -120,6 +105,12 @@ export async function acceptObligation(contractId: string, token: string, partyI
     choice: "AcceptObligation",
     argument: {},
   });
+
+  await auditLedgerExercise(T.Obligation, "AcceptObligation", contractId, data.events, {
+    actorPartyId: partyId,
+    beforePayload: obligation as unknown as Record<string, unknown>,
+  });
+
   return { data };
 }
 
@@ -129,7 +120,7 @@ export async function rejectObligation(
   partyId: string,
   reason: string,
 ) {
-  const obligation = await prisma.obligation.findUnique({ where: { contractId } });
+  const obligation = await getObligation(contractId);
   if (!obligation) return { error: "Obligation not found", status: 404 as const };
   if (obligation.receiver !== partyId) {
     return { error: "Only receiver can reject this obligation", status: 403 as const };
@@ -140,5 +131,12 @@ export async function rejectObligation(
     choice: "RejectObligation",
     argument: { reason },
   });
+
+  await auditLedgerExercise(T.Obligation, "RejectObligation", contractId, data.events, {
+    actorPartyId: partyId,
+    beforePayload: obligation as unknown as Record<string, unknown>,
+    argument: { reason },
+  });
+
   return { data };
 }

@@ -5,7 +5,13 @@ import { T } from "../ledger/templateIds";
 import { ValidatorCantonAdapter } from "../canton/validatorAdapter";
 import { slugify } from "../utils/crypto";
 import { isServiceError } from "../utils/http";
-import { resolveAgreementFromInput, upsertAgreementFromLedger } from "./agreementsService";
+import { resolveAgreementFromInput, syncUserAgreementContractId } from "./agreementsService";
+import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
+import {
+  extractExerciseContractId,
+  findCreatedEvent,
+  partyInList,
+} from "../ledger/v2";
 
 export interface OnboardingFormInput {
   email: string;
@@ -104,14 +110,17 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   if (isServiceError(agreementResolution)) {
     throw new Error(agreementResolution.error);
   }
-  const { agreementId, agreementContractId } = agreementResolution.data;
+  const { agreementId } = agreementResolution.data;
+  let { agreementContractId } = agreementResolution.data;
 
   const client = await operatorClient();
   const agreement = await client.fetchById(agreementContractId);
   if (!agreement) throw new Error("NettingAgreement not found on ledger");
 
-  const participants = (agreement.payload.participants as string[]) ?? [];
-  if (!participants.includes(partyId)) {
+  const participants = Array.isArray(agreement.payload.participants)
+    ? (agreement.payload.participants as string[])
+    : [];
+  if (!partyInList(participants, partyId)) {
     const result = await client.exercise({
       templateId: T.NettingAgreement,
       contractId: agreementContractId,
@@ -119,27 +128,33 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
       argument: { newParticipant: partyId },
     });
 
-    const created = (result.events as Array<{ created?: { contractId: string; payload?: Record<string, unknown> } }>).find(
-      (event) => event.created,
-    );
-    if (created?.created?.contractId && created.created.payload) {
-      await upsertAgreementFromLedger(created.created.contractId, {
-        agreementId: created.created.payload.agreementId as string | undefined,
-        operator: created.created.payload.operator as string | undefined,
-        settlementCurrency: created.created.payload.settlementCurrency as string | undefined,
-        participants: created.created.payload.participants as string[] | undefined,
-        agreementDate: created.created.payload.agreementDate as string | undefined,
-      });
+    await auditLedgerExercise(T.NettingAgreement, "AddParticipant", agreementContractId, result.events, {
+      argument: { newParticipant: partyId },
+    });
+
+    const created =
+      findCreatedEvent(
+        result.events as Array<{ created?: { contractId: string; templateId: string; payload: Record<string, unknown> } }>,
+        T.NettingAgreement,
+      ) ?? null;
+    const newContractId =
+      extractExerciseContractId(result.exerciseResult) ?? created?.contractId ?? null;
+    if (!newContractId) {
+      throw new Error("AddParticipant did not return a new NettingAgreement contract id");
     }
+
+    agreementContractId = newContractId;
+    await syncUserAgreementContractId(agreementId, agreementContractId);
   }
 
   const operatorPartyId = await getOperatorPartyId();
   const currency = process.env.APP_DEFAULT_CURRENCY ?? "USD";
-  const existingAccount = (await client.query(T.CashAccount)).find(
-    (account) => account.payload.owner === partyId && account.payload.currency === currency,
+
+  const existingAccount = (await client.query(T.CashAccount, { owner: partyId })).find(
+    (account) => account.payload.currency === currency,
   );
   if (!existingAccount) {
-    await client.create({
+    const account = await client.create({
       templateId: T.CashAccount,
       payload: {
         owner: partyId,
@@ -148,6 +163,7 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
         operator: operatorPartyId,
       },
     });
+    await auditLedgerCreate(T.CashAccount, account.contractId, account.payload, operatorPartyId);
   }
 
   const updatedUser = await prisma.user.update({

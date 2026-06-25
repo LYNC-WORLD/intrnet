@@ -1,25 +1,13 @@
-import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
-
-function nextCashAccountContractId(events: unknown[]) {
-  const createdAccount = (events as Array<{ created?: { templateId?: string; contractId?: string } }>).find(
-    (event) => event.created?.templateId?.includes("CashAccount"),
-  );
-  return createdAccount?.created?.contractId;
-}
-
-function toConflictError(err: unknown) {
-  if (err instanceof Error) return { error: err.message, status: 409 as const };
-  return { error: "Ledger operation failed", status: 409 as const };
-}
+import { toConflictError } from "../utils/http";
+import { getCashAccount } from "../repositories/pqsLedgerReadRepository";
+import { auditLedgerExercise } from "./ledgerAudit";
 
 export async function fundAccount(owner: string, currency: string, amount: number) {
   if (amount <= 0) return { error: "Amount must be positive", status: 400 as const };
 
-  const account = await prisma.cashAccount.findFirst({
-    where: { owner, currency },
-  });
+  const account = await getCashAccount(owner, currency);
   if (!account) return { error: "Cash account not found", status: 404 as const };
 
   try {
@@ -30,12 +18,12 @@ export async function fundAccount(owner: string, currency: string, amount: numbe
       choice: "Credit",
       argument: { creditAmount: String(amount) },
     });
-    return {
-      data: {
-        ...result,
-        newContractId: nextCashAccountContractId(result.events),
-      },
-    };
+
+    await auditLedgerExercise(T.CashAccount, "Credit", account.contractId, result.events, {
+      argument: { creditAmount: String(amount) },
+    });
+
+    return { data: result };
   } catch (err) {
     return toConflictError(err);
   }

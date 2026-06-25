@@ -18,6 +18,8 @@ export interface LegacyArchivedEvent {
   templateId: string;
 }
 
+export type ExerciseEvents = Array<{ created?: LegacyCreatedEvent }>;
+
 export function decodeTokenClaims(token: string): TokenClaims {
   const decoded = jwt.decode(token);
   if (!decoded || typeof decoded === "string") return {};
@@ -107,4 +109,45 @@ export function extractPackageId(templateId: string): string | null {
 
 export function newCommandId(): string {
   return randomUUID();
+}
+
+export function partyInList(parties: string[], partyId: string): boolean {
+  return parties.some(
+    (party) => party === partyId || party.startsWith(`${partyId}::`) || partyId.startsWith(`${party}::`),
+  );
+}
+
+export function extractExerciseContractId(result: unknown): string | null {
+  if (!result) return null;
+  if (typeof result === "string") {
+    const normalized = result.replace(/^#/, "");
+    return normalized.includes(":") ? normalized.split(":")[0]! : normalized;
+  }
+  if (typeof result === "object") {
+    const record = result as Record<string, unknown>;
+    if (typeof record.contractId === "string") return record.contractId;
+    if (typeof record.value === "string") return extractExerciseContractId(record.value);
+  }
+  return null;
+}
+
+export function findCreatedEvent(
+  events: Array<{ created?: LegacyCreatedEvent }>,
+  templateId: string,
+): LegacyCreatedEvent | null {
+  for (const event of events) {
+    if (event.created && matchesTemplate(event.created.templateId, templateId)) {
+      return event.created;
+    }
+  }
+  return null;
+}
+
+export function findAllCreatedEvents(
+  events: Array<{ created?: LegacyCreatedEvent }>,
+  templateId: string,
+): LegacyCreatedEvent[] {
+  return events
+    .filter((e) => e.created && matchesTemplate(e.created.templateId, templateId))
+    .map((e) => e.created!);
 }

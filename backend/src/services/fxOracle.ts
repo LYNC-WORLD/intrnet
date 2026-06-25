@@ -3,6 +3,7 @@ import cron, { ScheduledTask } from "node-cron";
 import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
+import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 
 const CURRENCIES = (process.env.SUPPORTED_CURRENCIES ?? "EUR,GBP,JPY,CHF,AUD")
   .split(",")
@@ -87,14 +88,20 @@ export async function refreshFxRates() {
       );
 
       if (existingContract) {
-        await client.exercise({
+        const result = await client.exercise({
           templateId: T.FxRateOracle,
           contractId: existingContract.contractId,
           choice: "UpdateRate",
           argument: { newRate: String(invRate.toFixed(8)), newAsOf: now },
         });
+        await auditLedgerExercise(
+          T.FxRateOracle,
+          "UpdateRate",
+          existingContract.contractId,
+          result.events,
+        );
       } else {
-        await client.create({
+        const created = await client.create({
           templateId: T.FxRateOracle,
           payload: {
             operator: operatorPartyId,
@@ -104,6 +111,7 @@ export async function refreshFxRates() {
             asOf: now,
           },
         });
+        await auditLedgerCreate(T.FxRateOracle, created.contractId, created.payload, operatorPartyId);
       }
       console.log(`[FxOracle] updated ${currency}/${BASE} = ${invRate.toFixed(8)}`);
     }

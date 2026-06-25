@@ -18,7 +18,29 @@ export function mapCreatedEventType(templateId: string, payload: Record<string, 
   }
   if (templateId.includes("FxRateOracle")) return "FX Rate Updated";
   if (templateId.includes("CashAccount")) return "Cash Account Updated";
+  if (templateId.includes("NettingAgreement")) return "Agreement Updated";
   return "Contract Created";
+}
+
+export function mapExerciseEventType(templateId: string, choice: string): string {
+  if (templateId.includes("Obligation") && choice === "RejectObligation") return "Obligation Rejected";
+  if (templateId.includes("NetPosition") && choice === "AcknowledgePosition") return "Position Acknowledged";
+  if (templateId.includes("SettlementInstruction") && choice === "ConfirmReceipt") {
+    return "Settlement Confirmed";
+  }
+  if (templateId.includes("NettingCycle")) {
+    if (choice === "SettleCycle") return "Cycle Settled";
+    if (choice === "ForceSettleCycle") return "Cycle Force Settled";
+    if (choice === "CloseCycle") return "Cycle Closed";
+    if (choice === "ComputeNetPositions") return "Net Positions Computed";
+    if (choice === "AddObligation") return "Obligation Added To Cycle";
+  }
+  if (templateId.includes("CashAccount") && choice === "Credit") return "Cash Account Credited";
+  if (templateId.includes("CashAccount") && choice === "Debit") return "Cash Account Debited";
+  if (templateId.includes("NettingAgreement") && choice === "AddParticipant") return "Participant Added";
+  if (templateId.includes("NettingAgreement") && choice === "StartNettingCycle") return "Cycle Opened";
+  if (templateId.includes("FxRateOracle") && choice === "UpdateRate") return "FX Rate Updated";
+  return `${choice} Exercised`;
 }
 
 export function inferActorPartyId(templateId: string, payload: Record<string, unknown>): string | null {
@@ -27,9 +49,7 @@ export function inferActorPartyId(templateId: string, payload: Record<string, un
     return (payload.payer as string) ?? null;
   }
   if (templateId.includes("NetPosition")) return (payload.participant as string) ?? null;
-  if (templateId.includes("SettlementInstruction")) {
-    return (payload.payer as string) ?? null;
-  }
+  if (templateId.includes("SettlementInstruction")) return (payload.payer as string) ?? null;
   return (payload.operator as string) ?? (payload.owner as string) ?? null;
 }
 
@@ -49,15 +69,19 @@ export async function recordAuditEvent(params: {
   cycleId?: string | null;
   timestamp?: Date;
 }) {
-  await prisma.auditEvent.create({
-    data: {
-      eventType: params.eventType,
-      actorPartyId: params.actorPartyId ?? null,
-      contractId: params.contractId ?? null,
-      templateId: params.templateId ?? null,
-      payload: params.payload as Prisma.InputJsonValue,
-      cycleId: params.cycleId ?? null,
-      timestamp: params.timestamp,
-    },
-  });
+  try {
+    await prisma.auditEvent.create({
+      data: {
+        eventType: params.eventType,
+        actorPartyId: params.actorPartyId ?? null,
+        contractId: params.contractId ?? null,
+        templateId: params.templateId ?? null,
+        payload: params.payload as Prisma.InputJsonValue,
+        cycleId: params.cycleId ?? null,
+        timestamp: params.timestamp,
+      },
+    });
+  } catch (err) {
+    console.error("[audit] Failed to record event:", err);
+  }
 }

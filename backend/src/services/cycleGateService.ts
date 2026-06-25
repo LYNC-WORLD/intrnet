@@ -1,5 +1,3 @@
-import { NetPosition, SettlementInstruction } from "@prisma/client";
-
 function parseStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
@@ -9,8 +7,8 @@ export function computeCycleGateSummary(input: {
   settlementPhase: string;
   ackDeadline: Date | null;
   positionContractIds: unknown;
-  positions: NetPosition[];
-  instructions: Pick<SettlementInstruction, "status">[];
+  positions: { status: string }[];
+  instructions: { status: string }[];
 }) {
   const { status, settlementPhase, ackDeadline, positionContractIds, positions, instructions } = input;
   const pendingAckCount = positions.filter((position) => position.status !== "ACKNOWLEDGED").length;

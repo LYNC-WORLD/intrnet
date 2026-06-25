@@ -1,6 +1,10 @@
-import { prisma } from "../db";
 import { partyClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
+import {
+  getPosition,
+  listPositions as pqsListPositions,
+} from "../repositories/pqsLedgerReadRepository";
+import { auditLedgerExercise } from "./ledgerAudit";
 
 export async function listPositions(
   partyId: string,
@@ -9,21 +13,11 @@ export async function listPositions(
   userAgreementId?: string | null,
   agreementId?: string,
 ) {
-  const where: any = {};
-  if (role !== "operator") where.participant = partyId;
-  if (cycleId) where.cycleId = cycleId;
-
-  if (role !== "operator" && userAgreementId) {
-    where.cycle = { agreementId: userAgreementId };
-  } else if (role === "operator" && agreementId) {
-    where.cycle = { agreementId };
-  }
-
-  return prisma.netPosition.findMany({ where });
+  return pqsListPositions({ partyId, role, cycleId, userAgreementId, agreementId });
 }
 
 export async function acknowledgePosition(contractId: string, token: string, partyId: string) {
-  const position = await prisma.netPosition.findUnique({ where: { contractId } });
+  const position = await getPosition(contractId);
   if (!position) return { error: "Net position not found", status: 404 as const };
   if (position.participant !== partyId) {
     return { error: "Not authorized for this net position", status: 403 as const };
@@ -38,5 +32,11 @@ export async function acknowledgePosition(contractId: string, token: string, par
     choice: "AcknowledgePosition",
     argument: {},
   });
+
+  await auditLedgerExercise(T.NetPosition, "AcknowledgePosition", contractId, data.events, {
+    actorPartyId: partyId,
+    beforePayload: position as unknown as Record<string, unknown>,
+  });
+
   return { data };
 }

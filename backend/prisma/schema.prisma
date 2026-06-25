@@ -8,149 +8,46 @@ generator client {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  oauthProvider String?
-  oauthSub     String?  @unique
-  partyId      String?  @unique
-  ledgerUserId String?  @unique
-  agreementId  String?
+  id                  String              @id @default(cuid())
+  email               String              @unique
+  oauthProvider       String?
+  oauthSub            String?             @unique
+  partyId             String?             @unique
+  ledgerUserId        String?             @unique
+  agreementId         String?
   agreementContractId String?
-  role         String
-  companyName  String?
-  status       String   @default("PENDING")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  onboardingRequest OnboardingRequest?
+  role                String
+  companyName         String?
+  status              String              @default("PENDING")
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  onboardingRequest   OnboardingRequest?
 
   @@index([agreementId])
 }
 
 model OnboardingRequest {
-  id               String   @id @default(cuid())
-  userId           String   @unique
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  companyName      String
-  contactName      String?
-  phone            String?
-  country          String?
-  partyHint        String?
-  state            String   @default("DRAFT")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName String
+  contactName String?
+  phone       String?
+  country     String?
+  partyHint   String?
+  state       String   @default("DRAFT")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([state])
 }
 
-model Obligation {
-  id          String   @id @default(cuid())
-  contractId  String   @unique
-  payer       String
-  receiver    String
-  amount      Decimal  @db.Decimal(20, 8)
-  currency    String
-  description String
-  invoiceRef  String
-  agreementId String
-  status      String
-  createdAt   DateTime
-  updatedAt   DateTime @updatedAt
-
-  @@index([payer])
-  @@index([receiver])
-  @@index([status])
-  @@index([agreementId])
-}
-
-model NettingAgreement {
-  id                 String   @id @default(cuid())
-  agreementId        String   @unique
-  contractId         String   @unique
-  operator           String
-  settlementCurrency String
-  participants       Json
-  agreementDate      DateTime
-  updatedAt          DateTime @updatedAt
-}
-
-model NettingCycle {
-  id                 String        @id @default(cuid())
-  contractId         String        @unique
-  cycleId            String        @unique
-  operator           String
-  settlementCurrency String
-  status             String
-  cutoffTime         DateTime
-  agreementId        String
-  ackDeadline        DateTime?
-  positionContractIds Json         @default("[]")
-  settlementInstructionContractIds Json @default("[]")
-  settlementPhase    String        @default("NOT_SETTLED")
-  forceSettled       Boolean       @default(false)
-  settledAt          DateTime?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  positions          NetPosition[]
-
-  @@index([cycleId])
-  @@index([status])
-}
-
-model NetPosition {
-  id                  String      @id @default(cuid())
-  contractId          String      @unique
-  participant         String
-  cycleId             String
-  cycle               NettingCycle @relation(fields: [cycleId], references: [cycleId])
-  netAmountSettlement Decimal     @db.Decimal(20, 8)
-  settlementCurrency  String
-  status              String
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
-
-  @@index([participant])
-  @@index([cycleId])
-}
-
-model SettlementInstruction {
-  id         String   @id @default(cuid())
-  contractId String   @unique
-  payer      String
-  receiver   String
-  amount     Decimal  @db.Decimal(20, 8)
-  currency   String
-  cycleId    String
-  status     String
-  failureReason String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([payer])
-  @@index([receiver])
-  @@index([cycleId])
-}
-
-model FxRate {
-  id           String   @id @default(cuid())
-  contractId   String   @unique
-  fromCurrency String
-  toCurrency   String
-  rate         Decimal  @db.Decimal(20, 8)
-  asOf         DateTime
-  updatedAt    DateTime @updatedAt
-
-  @@unique([fromCurrency, toCurrency])
-}
-
-model CashAccount {
-  id         String   @id @default(cuid())
-  contractId String   @unique
-  owner      String
-  currency   String
-  balance    Decimal  @db.Decimal(20, 8)
-  updatedAt  DateTime @updatedAt
-
-  @@unique([owner, currency])
+model OperatorSettings {
+  id            String   @id @default("default")
+  cronSchedule  String
+  fxProvider    String
+  notifications Json     @default("{}")
+  updatedAt     DateTime @updatedAt
 }
 
 model AuditEvent {
@@ -180,12 +77,4 @@ model FxRateHistory {
 
   @@index([fromCurrency, toCurrency])
   @@index([asOf])
-}
-
-model OperatorSettings {
-  id            String   @id @default("default")
-  cronSchedule  String
-  fxProvider    String
-  notifications Json     @default("{}")
-  updatedAt     DateTime @updatedAt
 }

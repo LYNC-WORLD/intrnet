@@ -1,18 +1,14 @@
-import { prisma } from "../db";
 import { operatorClient, partyClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
-
-function toConflictError(err: unknown) {
-  if (err instanceof Error) return { error: err.message, status: 409 as const };
-  return { error: "Ledger operation failed", status: 409 as const };
-}
-
-function nextInstructionContractId(events: unknown[]) {
-  const createdInstruction = (
-    events as Array<{ created?: { templateId?: string; contractId?: string } }>
-  ).find((event) => event.created?.templateId?.includes("SettlementInstruction"));
-  return createdInstruction?.created?.contractId;
-}
+import { toConflictError } from "../utils/http";
+import {
+  getCashAccount,
+  getInstruction,
+  listCashAccounts as pqsListCashAccounts,
+  listCycleIdsByAgreement,
+  listSettlementInstructions as pqsListInstructions,
+} from "../repositories/pqsLedgerReadRepository";
+import { auditLedgerExercise } from "./ledgerAudit";
 
 export async function listSettlementInstructions(
   role: string,
@@ -22,51 +18,32 @@ export async function listSettlementInstructions(
 ) {
   const cycleFilterAgreementId = role === "operator" ? agreementId : userAgreementId;
   const cycleIds = cycleFilterAgreementId
-    ? (
-        await prisma.nettingCycle.findMany({
-          where: { agreementId: cycleFilterAgreementId },
-          select: { cycleId: true },
-        })
-      ).map((cycle) => cycle.cycleId)
+    ? await listCycleIdsByAgreement(cycleFilterAgreementId)
     : undefined;
 
-  const where: Record<string, unknown> = {};
-  if (cycleIds) where.cycleId = { in: cycleIds };
-  if (role !== "operator") where.OR = [{ payer: partyId }, { receiver: partyId }];
-
-  return prisma.settlementInstruction.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-  });
+  return pqsListInstructions({ role, partyId, cycleIds });
 }
 
 export async function listCashAccounts(role: string, partyId: string) {
   if (role === "operator") {
-    return prisma.cashAccount.findMany({ orderBy: { owner: "asc" } });
+    return pqsListCashAccounts();
   }
-  return prisma.cashAccount.findMany({
-    where: { owner: partyId },
-    orderBy: { currency: "asc" },
-  });
+  return pqsListCashAccounts(partyId);
 }
 
 export async function executeSettlement(contractId: string) {
-  const instruction = await prisma.settlementInstruction.findUnique({ where: { contractId } });
+  const instruction = await getInstruction(contractId);
   if (!instruction) return { error: "Settlement instruction not found", status: 404 as const };
   if (instruction.status !== "PENDING") {
     return { error: "Only PENDING settlement instructions can be executed", status: 400 as const };
   }
 
-  const payerAccount = await prisma.cashAccount.findFirst({
-    where: { owner: instruction.payer, currency: instruction.currency },
-  });
+  const payerAccount = await getCashAccount(instruction.payer, instruction.currency);
   if (!payerAccount) return { error: "Payer cash account not found", status: 404 as const };
-  const receiverAccount = await prisma.cashAccount.findFirst({
-    where: { owner: instruction.receiver, currency: instruction.currency },
-  });
+  const receiverAccount = await getCashAccount(instruction.receiver, instruction.currency);
   if (!receiverAccount) return { error: "Receiver cash account not found", status: 404 as const };
 
-  if (Number(payerAccount.balance) < Number(instruction.amount)) {
+  if (payerAccount.balance < instruction.amount) {
     return { error: "Insufficient payer balance", status: 400 as const };
   }
 
@@ -82,19 +59,16 @@ export async function executeSettlement(contractId: string) {
       },
     });
 
-    return {
-      data: {
-        ...result,
-        newContractId: nextInstructionContractId(result.events),
-      },
-    };
+    await auditLedgerExercise(T.SettlementInstruction, "ExecuteSettlement", contractId, result.events);
+
+    return { data: result };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
 export async function confirmSettlement(contractId: string, token: string, partyId: string) {
-  const instruction = await prisma.settlementInstruction.findUnique({ where: { contractId } });
+  const instruction = await getInstruction(contractId);
   if (!instruction) return { error: "Settlement instruction not found", status: 404 as const };
   if (instruction.receiver !== partyId) {
     return { error: "Only receiver can confirm this settlement", status: 403 as const };
@@ -110,12 +84,12 @@ export async function confirmSettlement(contractId: string, token: string, party
       choice: "ConfirmReceipt",
       argument: {},
     });
-    return {
-      data: {
-        ...result,
-        newContractId: nextInstructionContractId(result.events),
-      },
-    };
+
+    await auditLedgerExercise(T.SettlementInstruction, "ConfirmReceipt", contractId, result.events, {
+      actorPartyId: partyId,
+    });
+
+    return { data: result };
   } catch (err) {
     return toConflictError(err);
   }

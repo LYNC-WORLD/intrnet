@@ -28,7 +28,7 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
 export const getById = asyncHandler(async (req: Request, res: Response) => {
   const { partyId, role } = req.user;
   const contractId = String(req.params.contractId);
-  const result = await obligationsService.getObligation(contractId, partyId, role);
+  const result = await obligationsService.getObligationSvc(contractId, partyId, role);
   if (isServiceError(result)) return sendServiceError(res, result);
   return res.json({ success: true, data: result.data });
 });

@@ -1,20 +1,18 @@
 import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
-import { T } from "../ledger/templateIds";
-import { resolveAgreementContractId } from "./agreementsService";
+import {
+  getAgreementParticipants,
+  getAgreementContractId,
+} from "../repositories/pqsLedgerReadRepository";
 
 export async function listParticipants(agreementId: string) {
-  const agreement = await prisma.nettingAgreement.findUnique({
-    where: { agreementId },
-    select: { participants: true },
-  });
-  const participants = Array.isArray(agreement?.participants) ? (agreement?.participants as string[]) : [];
+  const participants = await getAgreementParticipants(agreementId);
 
   return prisma.user.findMany({
     where: {
       role: "participant",
       agreementId,
-      ...(participants.length ? { partyId: { in: participants } } : {}),
+      ...(participants.length > 0 ? { partyId: { in: participants } } : {}),
     },
     orderBy: { companyName: "asc" },
     select: {
@@ -27,11 +25,11 @@ export async function listParticipants(agreementId: string) {
 }
 
 export async function getAgreement(agreementId: string) {
-  const resolution = await resolveAgreementContractId(agreementId);
-  if ("error" in resolution) return resolution;
+  const contractId = await getAgreementContractId(agreementId);
+  if (!contractId) return { error: "Agreement not found", status: 404 as const };
 
   const client = await operatorClient();
-  const agreement = await client.fetchById(resolution.data);
+  const agreement = await client.fetchById(contractId);
   if (!agreement) return { error: "Agreement not found", status: 404 as const };
 
   return {
