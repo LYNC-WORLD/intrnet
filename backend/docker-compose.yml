@@ -11,6 +11,10 @@ services:
       - "${PORT}:${PORT}"
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "json-ledger-api.localhost:host-gateway"
+      - "grpc-ledger-api.localhost:host-gateway"
     depends_on:
       pqs:
         condition: service_started
@@ -21,6 +25,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "json-ledger-api.localhost:host-gateway"
+      - "grpc-ledger-api.localhost:host-gateway"
     command:
       - pipeline
       - ledger
