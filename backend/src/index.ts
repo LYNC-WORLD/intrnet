@@ -20,7 +20,20 @@ import { startFxOracleScheduler } from "./services/fxOracle";
 const app = express();
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
-app.use(cors());
+function corsOrigin(): cors.CorsOptions["origin"] {
+  const raw = process.env.CORS_ORIGINS?.trim();
+  if (!raw || raw === "*") return true;
+  return raw.split(",").map((o) => o.trim()).filter(Boolean);
+}
+
+app.use(
+  cors({
+    origin: corsOrigin(),
+    credentials: true,
+    allowedHeaders: ["Authorization", "Content-Type", "Accept"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  }),
+);
 app.use(express.json());
 
 app.use("/api/auth", authRouter);
