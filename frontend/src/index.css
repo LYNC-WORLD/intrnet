@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: theme('colors.ink.500');
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-ink-900 text-bone-100 font-sans antialiased;
+  }
+  h1, h2, h3, h4 {
+    @apply font-display;
+    letter-spacing: -0.01em;
+  }
+  ::selection {
+    background: theme('colors.lime.500');
+    color: theme('colors.ink.900');
+  }
+  :focus-visible {
+    outline: 2px solid theme('colors.lime.500');
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* thin custom scrollbar for app surfaces */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: theme('colors.ink.500');
+    border-radius: 999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Canton-style fine line grid, used as ambient texture */
+  .bg-fine-grid {
+    background-image:
+      linear-gradient(rgba(228, 249, 94, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(228, 249, 94, 0.02) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+
+  /* radial lime glow used behind hero/auth panels */
+  .bg-lime-glow {
+    background: radial-gradient(circle at 50% 0%, rgba(228, 249, 94, 0.12), transparent 60%);
+  }
+
+  .text-gradient-lime {
+    background: linear-gradient(90deg, #EEFB8C, #E4F95E);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
