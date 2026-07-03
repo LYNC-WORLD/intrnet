@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, ReactNode } from "react";
 import { User } from "../types";
 
-const JWT_KEY = import.meta.env.VITE_JWT_KEY || "nc_token";
+const JWT_KEY = "nc_token";
 const USER_KEY = "nc_user";
 
 interface AuthContextType {

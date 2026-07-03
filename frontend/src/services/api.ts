@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
-const JWT_KEY = import.meta.env.VITE_JWT_KEY || "nc_token";
+const JWT_KEY = "nc_token";
 
 const api: AxiosInstance = axios.create({
   baseURL: BASE_URL,
