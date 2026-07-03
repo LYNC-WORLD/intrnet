@@ -11,7 +11,7 @@ export function PendingApprovalGate({ companyName }: { companyName?: string }) {
   const { logout: auth0Logout } = useAuth0();
 
   const handleLogout = () => {
-    localStorage.removeItem(import.meta.env.VITE_JWT_KEY || "nc_token");
+    localStorage.removeItem("nc_token");
     localStorage.removeItem("nc_user");
     auth0Logout({
       logoutParams: { returnTo: window.location.origin + "/login" },
