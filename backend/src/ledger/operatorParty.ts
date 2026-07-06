@@ -4,7 +4,10 @@ import { cachePartyByHint, getCachedPartyByHint } from "./partyHintCache";
 let cachedOperatorPartyId: string | null = null;
 
 export async function getOperatorPartyId(): Promise<string> {
-  const hint = process.env.OPERATOR_PARTY?.trim() ?? "operator";
+  const hint = process.env.OPERATOR_PARTY?.trim();
+  if (!hint) {
+    throw new Error("OPERATOR_PARTY is required");
+  }
   if (hint.includes("::")) return hint;
 
   if (cachedOperatorPartyId) return cachedOperatorPartyId;
@@ -17,14 +20,11 @@ export async function getOperatorPartyId(): Promise<string> {
 
   const client = await operatorClient();
   const resolved = await client.findPartyByHint(hint);
-  cachedOperatorPartyId = resolved ?? hint;
 
   if (!resolved) {
-    console.warn(
-      `[OperatorParty] "${hint}" not found on ledger — using bare hint. ` +
-        "Set OPERATOR_PARTY to the full party id (hint::fingerprint).",
-    );
+    throw new Error(`OPERATOR_PARTY '${hint}' was not found as a local ledger party`);
   }
 
+  cachedOperatorPartyId = resolved;
   return cachedOperatorPartyId;
 }

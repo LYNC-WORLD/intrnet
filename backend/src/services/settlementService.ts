@@ -78,7 +78,7 @@ export async function confirmSettlement(contractId: string, token: string, party
   }
 
   try {
-    const result = await partyClient(token).exercise({
+    const result = await partyClient(token, partyId).exercise({
       templateId: T.SettlementInstruction,
       contractId,
       choice: "ConfirmReceipt",

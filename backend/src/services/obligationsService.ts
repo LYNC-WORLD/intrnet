@@ -73,7 +73,7 @@ export async function createObligation(params: {
   }
 
   const operatorPartyId = await getOperatorPartyId();
-  const created = await partyClient(token).create({
+  const created = await partyClient(token, partyId).create({
     templateId: T.Obligation,
     payload: {
       payer: partyId,
@@ -99,7 +99,7 @@ export async function acceptObligation(contractId: string, token: string, partyI
   if (obligation.receiver !== partyId) {
     return { error: "Only receiver can accept this obligation", status: 403 as const };
   }
-  const data = await partyClient(token).exercise({
+  const data = await partyClient(token, partyId).exercise({
     templateId: T.Obligation,
     contractId,
     choice: "AcceptObligation",
@@ -125,7 +125,7 @@ export async function rejectObligation(
   if (obligation.receiver !== partyId) {
     return { error: "Only receiver can reject this obligation", status: 403 as const };
   }
-  const data = await partyClient(token).exercise({
+  const data = await partyClient(token, partyId).exercise({
     templateId: T.Obligation,
     contractId,
     choice: "RejectObligation",

@@ -26,7 +26,7 @@ export async function acknowledgePosition(contractId: string, token: string, par
     return { error: "Only PENDING positions can be acknowledged", status: 400 as const };
   }
 
-  const data = await partyClient(token).exercise({
+  const data = await partyClient(token, partyId).exercise({
     templateId: T.NetPosition,
     contractId,
     choice: "AcknowledgePosition",
