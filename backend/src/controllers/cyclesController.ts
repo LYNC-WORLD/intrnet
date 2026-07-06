@@ -26,7 +26,7 @@ export const start = asyncHandler(async (req: Request, res: Response) => {
     agreementContractId,
   );
   if (isServiceError(result)) return sendServiceError(res, result);
-  return res.status(201).json({ success: true, data: result });
+  return res.status(201).json({ success: true, data: result.data });
 });
 
 export const addObligations = asyncHandler(async (req: Request, res: Response) => {

@@ -565,7 +565,7 @@ export const openApiSpec = {
         responses: {
           "201": {
             description: "Cycle started on ledger",
-            content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
+            content: json({ $ref: "#/components/schemas/StartCycleResponse" }),
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -576,8 +576,9 @@ export const openApiSpec = {
     "/api/cycles/{contractId}": {
       get: {
         tags: ["Cycles"],
-        summary: "Get cycle by contract ID",
+        summary: "Get cycle by contract ID or cycleId",
         description:
+          "Accepts either the ledger contract id or the stable `cycleId` text field. " +
           "Returns cycle fields plus gate summary (`canSettle`, `canForceSettle`, `canClose`, `pendingAckCount`). " +
           "Use `positionCids.length > 0` to detect that compute has been called.",
         security: [{ bearerAuth: [] }],
@@ -596,7 +597,9 @@ export const openApiSpec = {
       post: {
         tags: ["Cycles"],
         summary: "Add accepted obligations to cycle (operator)",
-        description: "Adds all `ACCEPTED` obligations for the agreement and marks them `NETTED`.",
+        description:
+          "Adds all `ACCEPTED` obligations for the agreement to the cycle. Obligations remain `ACCEPTED` until " +
+          "`POST /api/cycles/{contractId}/compute` runs `ComputeNetPositions` and `MarkAsNetted`.",
         security: [{ bearerAuth: [] }],
         parameters: [{ name: "contractId", in: "path", required: true, schema: { type: "string" } }],
         responses: {

@@ -1,5 +1,6 @@
 import { operatorClient, partyClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId } from "../ledger/v2";
 import { toConflictError } from "../utils/http";
 import {
   getCashAccount,
@@ -61,7 +62,19 @@ export async function executeSettlement(contractId: string) {
 
     await auditLedgerExercise(T.SettlementInstruction, "ExecuteSettlement", contractId, result.events);
 
-    return { data: result };
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+      T.SettlementInstruction,
+    );
+
+    return {
+      data: {
+        newContractId,
+        exerciseResult: result.exerciseResult,
+        events: result.events,
+      },
+    };
   } catch (err) {
     return toConflictError(err);
   }
@@ -89,7 +102,19 @@ export async function confirmSettlement(contractId: string, token: string, party
       actorPartyId: partyId,
     });
 
-    return { data: result };
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+      T.SettlementInstruction,
+    );
+
+    return {
+      data: {
+        newContractId,
+        exerciseResult: result.exerciseResult,
+        events: result.events,
+      },
+    };
   } catch (err) {
     return toConflictError(err);
   }

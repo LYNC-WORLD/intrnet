@@ -8,7 +8,7 @@ import { isServiceError } from "../utils/http";
 import { resolveAgreementFromInput, syncUserAgreementContractId } from "./agreementsService";
 import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 import {
-  extractExerciseContractId,
+  extractRecreatedContractId,
   findCreatedEvent,
   partyInList,
 } from "../ledger/v2";
@@ -138,7 +138,11 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
         T.NettingAgreement,
       ) ?? null;
     const newContractId =
-      extractExerciseContractId(result.exerciseResult) ?? created?.contractId ?? null;
+      extractRecreatedContractId(
+        result.exerciseResult,
+        result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+        T.NettingAgreement,
+      ) ?? created?.contractId ?? null;
     if (!newContractId) {
       throw new Error("AddParticipant did not return a new NettingAgreement contract id");
     }

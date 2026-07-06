@@ -2,6 +2,7 @@ import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId } from "../ledger/v2";
 import { listFxRates as pqsListFxRates } from "../repositories/pqsLedgerReadRepository";
 import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 import { refreshFxRates } from "./fxOracle";
@@ -57,6 +58,11 @@ export async function updateFxRate(contractId: string, rate: number | string, as
     },
   });
 
+  const newContractId = extractRecreatedContractId(
+    result.exerciseResult,
+    result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+    T.FxRateOracle,
+  );
   const newEvent = (result.events as Array<{ created?: { contractId: string; payload: Record<string, unknown> } }>)
     .find((e) => e.created?.payload)?.created;
   if (newEvent) {
@@ -73,7 +79,11 @@ export async function updateFxRate(contractId: string, rate: number | string, as
     }).catch(console.error);
   }
 
-  return result;
+  return {
+    newContractId,
+    exerciseResult: result.exerciseResult,
+    events: result.events,
+  };
 }
 
 export async function refreshRates() {

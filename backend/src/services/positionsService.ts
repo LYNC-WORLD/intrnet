@@ -1,5 +1,6 @@
 import { partyClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId } from "../ledger/v2";
 import {
   getPosition,
   listPositions as pqsListPositions,
@@ -38,5 +39,17 @@ export async function acknowledgePosition(contractId: string, token: string, par
     beforePayload: position as unknown as Record<string, unknown>,
   });
 
-  return { data };
+  const newContractId = extractRecreatedContractId(
+    data.exerciseResult,
+    data.events as Array<{ created?: { contractId: string; templateId: string } }>,
+    T.NetPosition,
+  );
+
+  return {
+    data: {
+      newContractId,
+      exerciseResult: data.exerciseResult,
+      events: data.events,
+    },
+  };
 }

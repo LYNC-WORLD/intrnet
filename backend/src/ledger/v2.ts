@@ -18,7 +18,13 @@ export interface LegacyArchivedEvent {
   templateId: string;
 }
 
-export type ExerciseEvents = Array<{ created?: LegacyCreatedEvent }>;
+export interface CreatedEventRef {
+  contractId: string;
+  templateId: string;
+  payload?: Record<string, unknown>;
+}
+
+export type ExerciseEvents = Array<{ created?: CreatedEventRef }>;
 
 export function decodeTokenClaims(token: string): TokenClaims {
   const decoded = jwt.decode(token);
@@ -131,23 +137,29 @@ export function extractExerciseContractId(result: unknown): string | null {
   return null;
 }
 
-export function findCreatedEvent(
-  events: Array<{ created?: LegacyCreatedEvent }>,
+export function extractRecreatedContractId(
+  exerciseResult: unknown,
+  events: ExerciseEvents,
   templateId: string,
-): LegacyCreatedEvent | null {
+): string | null {
+  const fromResult = extractExerciseContractId(exerciseResult);
+  if (fromResult) {
+    const created = findCreatedEvent(events, templateId);
+    if (!created || created.contractId === fromResult) return fromResult;
+  }
+
+  const created = findCreatedEvent(events, templateId);
+  return created?.contractId ?? extractExerciseContractId(exerciseResult);
+}
+
+export function findCreatedEvent(
+  events: ExerciseEvents,
+  templateId: string,
+): CreatedEventRef | null {
   for (const event of events) {
     if (event.created && matchesTemplate(event.created.templateId, templateId)) {
       return event.created;
     }
   }
   return null;
-}
-
-export function findAllCreatedEvents(
-  events: Array<{ created?: LegacyCreatedEvent }>,
-  templateId: string,
-): LegacyCreatedEvent[] {
-  return events
-    .filter((e) => e.created && matchesTemplate(e.created.templateId, templateId))
-    .map((e) => e.created!);
 }

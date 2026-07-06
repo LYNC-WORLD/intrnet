@@ -41,7 +41,7 @@ export async function auditLedgerExercise(
       await auditLedgerCreate(
         event.created.templateId,
         event.created.contractId,
-        event.created.payload,
+        event.created.payload ?? {},
         context?.actorPartyId,
       );
     }

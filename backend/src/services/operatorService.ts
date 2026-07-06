@@ -1,5 +1,6 @@
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId } from "../ledger/v2";
 import { toConflictError } from "../utils/http";
 import { getCashAccount } from "../repositories/pqsLedgerReadRepository";
 import { auditLedgerExercise } from "./ledgerAudit";
@@ -23,7 +24,19 @@ export async function fundAccount(owner: string, currency: string, amount: numbe
       argument: { creditAmount: String(amount) },
     });
 
-    return { data: result };
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+      T.CashAccount,
+    );
+
+    return {
+      data: {
+        newContractId,
+        exerciseResult: result.exerciseResult,
+        events: result.events,
+      },
+    };
   } catch (err) {
     return toConflictError(err);
   }

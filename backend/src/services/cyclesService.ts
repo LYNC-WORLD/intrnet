@@ -1,5 +1,6 @@
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId, type ExerciseEvents } from "../ledger/v2";
 import { isServiceError, toConflictError } from "../utils/http";
 import { resolveAgreementFromInput } from "./agreementsService";
 import { computeCycleGateSummary } from "./cycleGateService";
@@ -13,19 +14,36 @@ import {
   listCycles as pqsListCycles,
 } from "../repositories/pqsLedgerReadRepository";
 
-async function loadSettlementPositionCids(contractId: string) {
-  const cycle = await getCycleByContractId(contractId);
+function exerciseResultPayload(
+  newContractId: string,
+  result: { exerciseResult: unknown; events: unknown },
+) {
+  return {
+    newContractId,
+    exerciseResult: result.exerciseResult,
+    events: result.events,
+  };
+}
+
+async function resolveCycle(contractIdOrCycleId: string) {
+  const byContractId = await getCycleByContractId(contractIdOrCycleId);
+  if (byContractId) return byContractId;
+  return getCycleByCycleId(contractIdOrCycleId);
+}
+
+async function loadSettlementPositionCids(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
 
   const positions = await getActivePositionsForCycle(cycle.cycleId, "ACKNOWLEDGED");
-  return { data: positions.map((p) => p.contractId) };
+  return { data: positions.map((p) => p.contractId), cycle };
 }
 
-async function loadSettlementInstructionCids(contractId: string) {
-  const cycle = await getCycleByContractId(contractId);
+async function loadSettlementInstructionCids(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
   const instructions = await getActiveInstructionsForCycle(cycle.cycleId);
-  return { data: instructions.map((i) => i.contractId) };
+  return { data: instructions.map((i) => i.contractId), cycle };
 }
 
 export async function listCycles(
@@ -36,8 +54,8 @@ export async function listCycles(
   return pqsListCycles({ role, userAgreementId, agreementId });
 }
 
-export async function getCycle(contractId: string) {
-  const cycle = await getCycleByContractId(contractId);
+export async function getCycle(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
 
   const positions = await getActivePositionsForCycle(cycle.cycleId);
@@ -85,93 +103,148 @@ export async function startCycle(
     { argument: { cycleId, cutoffTime } },
   );
 
-  return result;
+  const newContractId = extractRecreatedContractId(
+    result.exerciseResult,
+    result.events as ExerciseEvents,
+    T.NettingCycle,
+  );
+  if (!newContractId) {
+    throw new Error("StartNettingCycle did not return a NettingCycle contract id");
+  }
+
+  return {
+    data: {
+      newContractId,
+      cycleContractId: newContractId,
+      exerciseResult: result.exerciseResult,
+      events: result.events,
+    },
+  };
 }
 
-export async function addObligationsToCycle(contractId: string) {
-  const cycle = await getCycleByContractId(contractId);
+export async function addObligationsToCycle(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
-  const newContractId = await bulkAddObligations(contractId, cycle.cycleId, cycle.agreementId);
+  const newContractId = await bulkAddObligations(cycle.contractId, cycle.cycleId, cycle.agreementId);
   return { data: { newContractId } };
 }
 
-export async function computeCyclePositions(contractId: string, ackDeadline?: string) {
-  const cycle = await getCycleByContractId(contractId);
+export async function computeCyclePositions(contractIdOrCycleId: string, ackDeadline?: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
 
   const resolvedAckDeadline = ackDeadline ?? cycle.cutoffTime.toISOString();
   try {
-    const result = await computeNetPositions(contractId, resolvedAckDeadline);
+    const result = await computeNetPositions(cycle.contractId, resolvedAckDeadline);
     return { data: result };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
-export async function settleCycle(contractId: string) {
-  const positionResult = await loadSettlementPositionCids(contractId);
+export async function settleCycle(contractIdOrCycleId: string) {
+  const positionResult = await loadSettlementPositionCids(contractIdOrCycleId);
   if (isServiceError(positionResult)) return positionResult;
 
   try {
     const client = await operatorClient();
     const result = await client.exercise({
       templateId: T.NettingCycle,
-      contractId,
+      contractId: positionResult.cycle.contractId,
       choice: "SettleCycle",
       argument: { positionCids: positionResult.data },
     });
 
-    await auditLedgerExercise(T.NettingCycle, "SettleCycle", contractId, result.events, {
-      argument: { positionCids: positionResult.data },
-    });
+    await auditLedgerExercise(
+      T.NettingCycle,
+      "SettleCycle",
+      positionResult.cycle.contractId,
+      result.events,
+      { argument: { positionCids: positionResult.data } },
+    );
 
-    return { data: result };
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as ExerciseEvents,
+      T.NettingCycle,
+    );
+    if (!newContractId) {
+      throw new Error("SettleCycle did not return an updated NettingCycle contract id");
+    }
+
+    return { data: exerciseResultPayload(newContractId, result) };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
-export async function forceSettleCycle(contractId: string) {
-  const positionResult = await loadSettlementPositionCids(contractId);
+export async function forceSettleCycle(contractIdOrCycleId: string) {
+  const positionResult = await loadSettlementPositionCids(contractIdOrCycleId);
   if (isServiceError(positionResult)) return positionResult;
 
   try {
     const client = await operatorClient();
     const result = await client.exercise({
       templateId: T.NettingCycle,
-      contractId,
+      contractId: positionResult.cycle.contractId,
       choice: "ForceSettleCycle",
       argument: { positionCids: positionResult.data },
     });
 
-    await auditLedgerExercise(T.NettingCycle, "ForceSettleCycle", contractId, result.events, {
-      argument: { positionCids: positionResult.data },
-    });
+    await auditLedgerExercise(
+      T.NettingCycle,
+      "ForceSettleCycle",
+      positionResult.cycle.contractId,
+      result.events,
+      { argument: { positionCids: positionResult.data } },
+    );
 
-    return { data: result };
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as ExerciseEvents,
+      T.NettingCycle,
+    );
+    if (!newContractId) {
+      throw new Error("ForceSettleCycle did not return an updated NettingCycle contract id");
+    }
+
+    return { data: exerciseResultPayload(newContractId, result) };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
-export async function closeCycle(contractId: string) {
-  const instructionResult = await loadSettlementInstructionCids(contractId);
+export async function closeCycle(contractIdOrCycleId: string) {
+  const instructionResult = await loadSettlementInstructionCids(contractIdOrCycleId);
   if (isServiceError(instructionResult)) return instructionResult;
 
   try {
     const client = await operatorClient();
     const result = await client.exercise({
       templateId: T.NettingCycle,
-      contractId,
+      contractId: instructionResult.cycle.contractId,
       choice: "CloseCycle",
       argument: { settlementInstructionCids: instructionResult.data },
     });
 
-    await auditLedgerExercise(T.NettingCycle, "CloseCycle", contractId, result.events, {
-      argument: { settlementInstructionCids: instructionResult.data },
-    });
+    await auditLedgerExercise(
+      T.NettingCycle,
+      "CloseCycle",
+      instructionResult.cycle.contractId,
+      result.events,
+      { argument: { settlementInstructionCids: instructionResult.data } },
+    );
 
-    return { data: result };
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as ExerciseEvents,
+      T.NettingCycle,
+    );
+    if (!newContractId) {
+      throw new Error("CloseCycle did not return an updated NettingCycle contract id");
+    }
+
+    return { data: exerciseResultPayload(newContractId, result) };
   } catch (err) {
     return toConflictError(err);
   }

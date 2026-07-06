@@ -22,7 +22,7 @@ template NettingAgreement
         assertMsg "Participant is already in this agreement" (notElem newParticipant participants)
         create this with participants = newParticipant :: participants
 
-    choice StartNettingCycle : ContractId NettingCycle
+    nonconsuming choice StartNettingCycle : ContractId NettingCycle
       with
         cycleId : Text
         cutoffTime : Time

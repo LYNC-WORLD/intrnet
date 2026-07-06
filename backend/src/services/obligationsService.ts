@@ -1,6 +1,7 @@
 import { partyClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId } from "../ledger/v2";
 import {
   getAgreementById,
   getObligation,
@@ -111,7 +112,19 @@ export async function acceptObligation(contractId: string, token: string, partyI
     beforePayload: obligation as unknown as Record<string, unknown>,
   });
 
-  return { data };
+  const newContractId = extractRecreatedContractId(
+    data.exerciseResult,
+    data.events as Array<{ created?: { contractId: string; templateId: string } }>,
+    T.Obligation,
+  );
+
+  return {
+    data: {
+      newContractId,
+      exerciseResult: data.exerciseResult,
+      events: data.events,
+    },
+  };
 }
 
 export async function rejectObligation(

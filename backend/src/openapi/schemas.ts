@@ -40,6 +40,11 @@ export const openApiComponents = {
         email: { type: "string", format: "email" },
         partyId: { ...partyId, nullable: true, description: "Set after onboarding approval (optional until approved)" },
         agreementId: { type: "string", nullable: true },
+        agreementContractId: {
+          type: "string",
+          nullable: true,
+          description: "Latest active NettingAgreement contract id (may change after AddParticipant)",
+        },
         role: { type: "string", enum: ["operator", "participant"] },
         companyName: { type: "string", nullable: true },
         status: { type: "string", enum: ["PENDING", "ACTIVE", "REJECTED"] },
@@ -214,6 +219,11 @@ export const openApiComponents = {
       type: "object",
       description: "Result of a ledger choice exercise",
       properties: {
+        newContractId: {
+          ...contractId,
+          nullable: true,
+          description: "Present when the choice recreates the contract with a new contract id",
+        },
         exerciseResult: { description: "Choice return value (shape varies by choice)" },
         events: { type: "array", items: { type: "object", additionalProperties: true } },
       },
@@ -524,6 +534,28 @@ export const openApiComponents = {
         agreementContractId: { type: "string", description: "Optional alternative to agreementId" },
       },
       required: ["cycleId", "cutoffTime", "agreementId"],
+    },
+    StartCycleResult: {
+      type: "object",
+      description:
+        "StartNettingCycle is nonconsuming; the agreement contract id is unchanged. Use newContractId for the created cycle.",
+      properties: {
+        newContractId: contractId,
+        cycleContractId: contractId,
+        exerciseResult: { description: "Ledger ContractId NettingCycle" },
+        events: { type: "array", items: { type: "object", additionalProperties: true } },
+      },
+      required: ["newContractId", "cycleContractId", "events"],
+    },
+    StartCycleResponse: {
+      allOf: [
+        { $ref: "#/components/schemas/ApiSuccessEnvelope" },
+        {
+          type: "object",
+          properties: { data: { $ref: "#/components/schemas/StartCycleResult" } },
+          required: ["data"],
+        },
+      ],
     },
     ComputeCycleRequest: {
       type: "object",

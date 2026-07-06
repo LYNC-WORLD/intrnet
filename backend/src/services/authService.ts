@@ -132,6 +132,7 @@ export async function getMe(userId: string) {
       email: user.email,
       partyId: user.partyId,
       agreementId: user.agreementId,
+      agreementContractId: user.agreementContractId,
       role: user.role,
       companyName: user.companyName,
       status: user.status,
