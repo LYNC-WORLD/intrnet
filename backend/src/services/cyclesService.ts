@@ -148,13 +148,21 @@ export async function addObligationsToCycle(contractIdOrCycleId: string) {
 }
 
 export async function computeCyclePositions(contractIdOrCycleId: string, ackDeadline?: string) {
-  const cycle = await resolveCycle(contractIdOrCycleId);
-  if (!cycle) return { error: "Cycle not found", status: 404 as const };
-
-  const resolvedAckDeadline = ackDeadline ?? cycle.cutoffTime.toISOString();
   try {
+    const cycle = await resolveCycle(contractIdOrCycleId);
+    if (!cycle) return { error: "Cycle not found", status: 404 as const };
+
+    const resolvedAckDeadline =
+      ackDeadline ??
+      (Number.isNaN(cycle.cutoffTime.getTime())
+        ? null
+        : cycle.cutoffTime.toISOString());
+    if (!resolvedAckDeadline) {
+      return { error: "Invalid cycle cutoffTime; pass ackDeadline in the request body", status: 400 as const };
+    }
+
     const result = await computeNetPositions(cycle.contractId, resolvedAckDeadline);
-    return { data: result };
+    return { data: { newContractId: result.newContractId } };
   } catch (err) {
     return toConflictError(err);
   }

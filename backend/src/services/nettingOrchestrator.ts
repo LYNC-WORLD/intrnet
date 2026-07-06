@@ -1,7 +1,10 @@
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
 import { extractRecreatedContractId, type ExerciseEvents } from "../ledger/v2";
-import { listAcceptedObligations } from "../repositories/pqsLedgerReadRepository";
+import {
+  getObligation,
+  listAcceptedObligations,
+} from "../repositories/pqsLedgerReadRepository";
 import { auditLedgerExercise } from "./ledgerAudit";
 
 async function markObligationsAsNetted(obligationCids: string[]) {
@@ -9,13 +12,29 @@ async function markObligationsAsNetted(obligationCids: string[]) {
 
   const client = await operatorClient();
   for (const obCid of obligationCids) {
+    const obligation = await getObligation(obCid);
+    if (!obligation) {
+      throw new Error(`Obligation not found while marking as netted: ${obCid}`);
+    }
+    if (obligation.status === "NETTED") continue;
+    if (obligation.status !== "ACCEPTED") {
+      throw new Error(
+        `Obligation ${obligation.invoiceRef} is ${obligation.status}; expected ACCEPTED before MarkAsNetted`,
+      );
+    }
+
     const markResult = await client.exercise({
       templateId: T.Obligation,
-      contractId: obCid,
+      contractId: obligation.contractId,
       choice: "MarkAsNetted",
       argument: {},
     });
-    await auditLedgerExercise(T.Obligation, "MarkAsNetted", obCid, markResult.events);
+    await auditLedgerExercise(
+      T.Obligation,
+      "MarkAsNetted",
+      obligation.contractId,
+      markResult.events,
+    );
   }
 }
 

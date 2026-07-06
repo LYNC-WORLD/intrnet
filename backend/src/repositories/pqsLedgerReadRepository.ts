@@ -387,15 +387,26 @@ export async function getCycleByContractId(contractId: string): Promise<PqsNetti
   return rows.length > 0 ? rowToCycle(rows[0]) : null;
 }
 
+function pickPreferredCycle(cycles: PqsNettingCycle[]): PqsNettingCycle {
+  return [...cycles].sort((a, b) => {
+    const score = (cycle: PqsNettingCycle) =>
+      (cycle.positionCids.length > 0 ? 4 : 0) +
+      (cycle.obligationCids.length > 0 ? 2 : 0) +
+      (cycle.settlementPhase === "SETTLED" ? 1 : 0);
+    return score(b) - score(a) || b.contractId.localeCompare(a.contractId);
+  })[0]!;
+}
+
 export async function getCycleByCycleId(cycleId: string): Promise<PqsNettingCycle | null> {
   const packageId = pkg();
   const { rows } = await pqs.query(
     `SELECT contract_id, payload FROM active($1)
-     WHERE package_id = $2 AND payload->>'cycleId' = $3
-     LIMIT 1`,
+     WHERE package_id = $2 AND payload->>'cycleId' = $3`,
     [T.NettingCycle, packageId, cycleId],
   );
-  return rows.length > 0 ? rowToCycle(rows[0]) : null;
+  if (rows.length === 0) return null;
+  const cycles = rows.map(rowToCycle);
+  return cycles.length === 1 ? cycles[0]! : pickPreferredCycle(cycles);
 }
 
 export async function listCycles(params: {
