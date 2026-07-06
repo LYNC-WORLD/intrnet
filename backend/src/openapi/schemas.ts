@@ -353,6 +353,11 @@ export const openApiComponents = {
         status: { type: "string", enum: ["OPEN", "CLOSED"] },
         cutoffTime: dateTime,
         agreementId: { type: "string" },
+        obligationCids: {
+          type: "array",
+          items: contractId,
+          description: "Obligation contract ids added to this cycle (ACCEPTED until compute, then NETTED)",
+        },
         ackDeadline: { ...dateTime, nullable: true, description: "Set after compute (optional before compute)" },
         positionCids: { type: "array", items: contractId, description: "Empty until compute is called" },
         settlementInstructionCids: {
@@ -373,6 +378,7 @@ export const openApiComponents = {
         "status",
         "cutoffTime",
         "agreementId",
+        "obligationCids",
         "positionCids",
         "settlementInstructionCids",
         "settlementPhase",

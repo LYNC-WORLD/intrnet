@@ -11,6 +11,7 @@ import {
   getCycleByCycleId,
   getActivePositionsForCycle,
   getActiveInstructionsForCycle,
+  getObligationsByContractIds,
   listCycles as pqsListCycles,
 } from "../repositories/pqsLedgerReadRepository";
 
@@ -76,6 +77,23 @@ export async function getCycle(contractIdOrCycleId: string) {
       ...gateSummary,
     },
   };
+}
+
+export async function listCycleObligations(
+  contractIdOrCycleId: string,
+  partyId: string,
+  role: string,
+) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
+  if (!cycle) return { error: "Cycle not found", status: 404 as const };
+
+  const obligations = await getObligationsByContractIds(cycle.obligationCids);
+  const visible =
+    role === "operator"
+      ? obligations
+      : obligations.filter((o) => o.payer === partyId || o.receiver === partyId);
+
+  return { data: { obligations: visible, total: visible.length } };
 }
 
 export async function startCycle(

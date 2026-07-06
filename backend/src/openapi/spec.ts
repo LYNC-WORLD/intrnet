@@ -593,6 +593,25 @@ export const openApiSpec = {
         },
       },
     },
+    "/api/cycles/{contractId}/obligations": {
+      get: {
+        tags: ["Cycles"],
+        summary: "List obligations in a cycle",
+        description:
+          "Resolves obligations from the cycle's `obligationCids` on ledger. " +
+          "Obligations are `ACCEPTED` after add-obligations and become `NETTED` only after compute.",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "contractId", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": {
+            description: "Obligations linked to the cycle",
+            content: json({ $ref: "#/components/schemas/ObligationListResponse" }),
+          },
+          "404": { $ref: "#/components/responses/NotFound" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
     "/api/cycles/{contractId}/add-obligations": {
       post: {
         tags: ["Cycles"],

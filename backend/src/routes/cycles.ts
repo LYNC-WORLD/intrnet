@@ -5,6 +5,7 @@ import { authenticateOAuth, requireActiveUser, requireOperator } from "../middle
 const router = Router();
 
 router.get("/", authenticateOAuth, requireActiveUser, cyclesController.list);
+router.get("/:contractId/obligations", authenticateOAuth, requireActiveUser, cyclesController.listObligations);
 router.get("/:contractId", authenticateOAuth, requireActiveUser, cyclesController.getById);
 router.post("/", authenticateOAuth, requireOperator, cyclesController.start);
 router.post("/:contractId/add-obligations", authenticateOAuth, requireOperator, cyclesController.addObligations);

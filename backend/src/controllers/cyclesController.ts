@@ -17,6 +17,14 @@ export const getById = asyncHandler(async (req: Request, res: Response) => {
   return res.json({ success: true, data: result.data });
 });
 
+export const listObligations = asyncHandler(async (req: Request, res: Response) => {
+  const contractId = String(req.params.contractId);
+  const { partyId, role } = req.user;
+  const result = await cyclesService.listCycleObligations(contractId, partyId, role);
+  if (isServiceError(result)) return sendServiceError(res, result);
+  return res.json({ success: true, data: result.data });
+});
+
 export const start = asyncHandler(async (req: Request, res: Response) => {
   const { cycleId, cutoffTime, agreementId, agreementContractId } = req.body;
   const result = await cyclesService.startCycle(

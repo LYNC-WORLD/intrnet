@@ -116,6 +116,7 @@ function rowToCycle(row: { contract_id: string; payload: Record<string, unknown>
     status: p.status as string,
     cutoffTime: new Date(p.cutoffTime as string),
     agreementId: p.agreementId as string,
+    obligationCids: Array.isArray(p.obligationCids) ? (p.obligationCids as string[]) : [],
     ackDeadline: p.ackDeadline ? new Date(p.ackDeadline as string) : null,
     positionCids: Array.isArray(p.positionCids) ? (p.positionCids as string[]) : [],
     settlementInstructionCids: Array.isArray(p.settlementInstructionCids)
@@ -217,6 +218,22 @@ export async function getAgreementParticipants(agreementId: string): Promise<str
   return agreement?.participants ?? [];
 }
 
+async function findActiveObligationByKey(
+  agreementId: string,
+  invoiceRef: string,
+): Promise<PqsObligation | null> {
+  const packageId = pkg();
+  const { rows } = await pqs.query(
+    `SELECT contract_id, payload FROM active($1)
+     WHERE package_id = $2
+       AND payload->>'agreementId' = $3
+       AND payload->>'invoiceRef' = $4
+     LIMIT 1`,
+    [T.Obligation, packageId, agreementId, invoiceRef],
+  );
+  return rows.length > 0 ? rowToObligation(rows[0]) : null;
+}
+
 export async function getObligation(contractId: string): Promise<PqsObligation | null> {
   const packageId = pkg();
   const { rows } = await pqs.query(
@@ -236,11 +253,34 @@ export async function getArchivedObligation(contractId: string): Promise<PqsObli
      FROM archives($1)
      WHERE package_id = $2
        AND contract_id = $3
-       AND payload->>'status' = 'PENDING'
      LIMIT 1`,
     [T.Obligation, packageId, contractId],
   );
-  return rows.length > 0 ? rowToObligation(rows[0], { rejected: true }) : null;
+  if (rows.length === 0) return null;
+
+  const payloadStatus = rows[0].payload.status as string;
+  const successor = await findActiveObligationByKey(
+    rows[0].payload.agreementId as string,
+    rows[0].payload.invoiceRef as string,
+  );
+  if (successor && successor.contractId !== contractId) {
+    return successor;
+  }
+
+  if (payloadStatus === "PENDING") {
+    return rowToObligation(rows[0], { rejected: true });
+  }
+
+  return rowToObligation(rows[0]);
+}
+
+export async function getObligationsByContractIds(contractIds: string[]): Promise<PqsObligation[]> {
+  const obligations: PqsObligation[] = [];
+  for (const contractId of contractIds) {
+    const obligation = await getObligation(contractId);
+    if (obligation) obligations.push(obligation);
+  }
+  return obligations;
 }
 
 async function listRejectedObligations(params: {

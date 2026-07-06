@@ -29,6 +29,7 @@ export interface PqsNettingCycle {
   status: string;
   cutoffTime: Date;
   agreementId: string;
+  obligationCids: string[];
   ackDeadline: Date | null;
   positionCids: string[];
   settlementInstructionCids: string[];
