@@ -152,6 +152,10 @@ export function extractRecreatedContractId(
   return created?.contractId ?? extractExerciseContractId(exerciseResult);
 }
 
+export function encodeTuple2<T1, T2>(first: T1, second: T2): { _1: T1; _2: T2 } {
+  return { _1: first, _2: second };
+}
+
 export function findCreatedEvent(
   events: ExerciseEvents,
   templateId: string,

@@ -1,6 +1,6 @@
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
-import { extractRecreatedContractId, type ExerciseEvents } from "../ledger/v2";
+import { extractRecreatedContractId, encodeTuple2, type ExerciseEvents } from "../ledger/v2";
 import {
   getObligation,
   listAcceptedObligations,
@@ -73,12 +73,14 @@ export async function bulkAddObligations(cycleCid: string, cycleId: string, agre
 
 export async function computeNetPositions(cycleCid: string, ackDeadline: string) {
   const client = await operatorClient();
-  const fxOracles = await client.query(T.FxRateOracle);
+  const cycleContract = await client.fetchById(cycleCid);
+  if (!cycleContract) throw new Error("NettingCycle contract not found");
 
-  const fxRateCids: [string, string][] = fxOracles.map((o) => [
-    o.payload.fromCurrency as string,
-    o.contractId,
-  ]);
+  const settlementCurrency = cycleContract.payload.settlementCurrency as string;
+  const fxOracles = await client.query(T.FxRateOracle);
+  const fxRateCids = fxOracles
+    .filter((o) => o.payload.toCurrency === settlementCurrency)
+    .map((o) => encodeTuple2(o.payload.fromCurrency as string, o.contractId));
 
   const result = await client.exercise({
     templateId: T.NettingCycle,
