@@ -121,11 +121,21 @@ export default function Account() {
                     >
                       {t.isCredit ? "Credit" : "Debit"}
                     </Td>
-                    <Td>{fmt.currency(t.amount, t.currency)}</Td>
+                    <Td>
+                      <span
+                        className={
+                          t.isCredit ? "text-emerald-400" : "text-red-400"
+                        }
+                      >
+                        {t.isCredit ? "+" : "-"}
+                        {fmt.currency(t.amount, t.currency)}
+                      </span>
+                    </Td>
+
                     <Td>
                       {t.isCredit
-                        ? (t.payerName ?? t.payer)
-                        : (t.receiverName ?? t.receiver)}
+                        ? t.payer.split("::")[0]
+                        : t.receiver.split("::")[0]}
                     </Td>
                     <Td>{t.cycleId}</Td>
                   </Tr>

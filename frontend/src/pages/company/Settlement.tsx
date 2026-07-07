@@ -17,6 +17,7 @@ import {
   Alert,
 } from "../../components/ui";
 import { fmt } from "../../utils";
+import { useAuth } from "@/context/AuthContext";
 
 const LOW_BALANCE_THRESHOLD = Number(50000);
 
@@ -36,6 +37,7 @@ export default function Settlement() {
   const [modalLoading, setModalLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const { user } = useAuth();
 
   const load = () => {
     setLoading(true);
@@ -60,16 +62,17 @@ export default function Settlement() {
   }, []);
 
   const filtered = instructions.filter((i) => {
-    if (tab === "pay") return i.status === "PENDING";
-    if (tab === "receive") return i.status === "EXECUTED";
+    if (tab === "pay") return i.payer === user?.partyId;
+    if (tab === "receive") return i.receiver === user?.partyId;
     return true;
   });
 
   const totalToPay = instructions
-    .filter((i) => i.status === "PENDING")
+    .filter((i) => i.payer === user?.partyId && i.status === "PENDING")
     .reduce((s, i) => s + i.amount, 0);
+
   const totalToReceive = instructions
-    .filter((i) => ["EXECUTED", "CONFIRMED"].includes(i.status))
+    .filter((i) => i.receiver === user?.partyId && i.status === "CONFIRMED")
     .reduce((s, i) => s + i.amount, 0);
 
   const openPayModal = async (instruction: SettlementInstruction) => {
@@ -175,27 +178,43 @@ export default function Settlement() {
                 {filtered.map((i) => (
                   <Tr key={i.contractId}>
                     <Td>{i.cycleId}</Td>
-                    <Td>{i.payerName ?? i.receiverName ?? "—"}</Td>
-                    <Td>{fmt.currency(i.amount, i.currency)}</Td>
+                    <Td>
+                      {user?.partyId === i.payer
+                        ? i.receiver.split("::")[0]
+                        : i.payer.split("::")[0]}
+                    </Td>
+                    <Td>
+                      <span
+                        className={
+                          user?.partyId === i.payer
+                            ? "text-red-400"
+                            : "text-emerald-400"
+                        }
+                      >
+                        {user?.partyId === i.payer ? "-" : "+"}
+                        {fmt.currency(i.amount, i.currency)}
+                      </span>
+                    </Td>{" "}
                     <Td>
                       <Badge status={i.status} />
                     </Td>
                     <Td>{fmt.dateShort(i.createdAt)}</Td>
                     <Td>
-                      {i.status === "PENDING" && (
+                      {/* {i.status === "PENDING" && (
                         <Button size="sm" onClick={() => openPayModal(i)}>
                           Pay
                         </Button>
-                      )}
-                      {i.status === "EXECUTED" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => handleConfirmReceipt(i.contractId)}
-                        >
-                          Confirm Receipt
-                        </Button>
-                      )}
+                      )} */}
+                      {i.status === "EXECUTED" &&
+                        i.receiver === user?.partyId && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleConfirmReceipt(i.contractId)}
+                          >
+                            Confirm Receipt
+                          </Button>
+                        )}
                     </Td>
                   </Tr>
                 ))}
