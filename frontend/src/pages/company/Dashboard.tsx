@@ -24,6 +24,7 @@ import {
   Alert,
 } from "../../components/ui";
 import { fmt } from "../../utils";
+import { useAuth } from "@/context/AuthContext";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -33,6 +34,7 @@ export default function Dashboard() {
   const [openCycle, setOpenCycle] = useState<NettingCycle | null>(null);
   const [acceptedCount, setAcceptedCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
 
   useEffect(() => {
     Promise.allSettled([
@@ -121,7 +123,7 @@ export default function Dashboard() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
           label="Pending Obligations"
           value={pending.length}
@@ -184,32 +186,45 @@ export default function Dashboard() {
                 pending.map((o) => (
                   <li
                     key={o.contractId}
-                    className="px-6 py-4 flex items-center justify-between gap-4"
+                    className="px-2 sm:px-6 py-4 flex items-center justify-between gap-4"
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-bone-100 truncate">
                         {o.invoiceRef}
                       </p>
-                      <p className="text-xs text-bone-500">
-                        From {o.payerName ?? o.payer} ·{" "}
-                        {fmt.currency(o.amount, o.currency)}
+                      <p className="text-xs flex items-center flex-wrap gap-1 text-bone-500">
+                        From{" "}
+                        <p className="truncate max-w-[80px] sm:max-w-[200px]">
+                          {o.payerName ?? o.payer}
+                        </p>{" "}
+                        · {fmt.currency(o.amount, o.currency)}
                       </p>
                     </div>
-                    <div className="flex gap-2 shrink-0">
-                      <Button
-                        size="sm"
-                        onClick={() => handleAccept(o.contractId)}
+
+                    {o.payer !== user?.partyId ? (
+                      <div className="flex gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={() => handleAccept(o.contractId)}
+                        >
+                          Accept
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => handleReject(o.contractId)}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    ) : (
+                      <Link
+                        to={`/obligations/${o.contractId}`}
+                        className="text-sm text-bone-500 hover:text-lime-400"
                       >
-                        Accept
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => handleReject(o.contractId)}
-                      >
-                        Reject
-                      </Button>
-                    </div>
+                        View
+                      </Link>
+                    )}
                   </li>
                 ))}
             </ul>

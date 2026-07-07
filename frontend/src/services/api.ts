@@ -89,7 +89,10 @@ export const obligationsApi = {
 // ─── Participants ─────────────────────────────────────────────────────────────
 export const participantsApi = {
   list: () => api.get("/api/participants"),
-  agreement: () => api.get("/api/agreement"),
+  agreement: (agreementId?: string) =>
+    api.get("/api/agreement", {
+      params: agreementId ? { agreementId } : undefined,
+    }),
 };
 
 // ─── FX Rates ─────────────────────────────────────────────────────────────────
@@ -137,7 +140,7 @@ export const settlementApi = {
   execute: (cid: string) =>
     api.post(`/api/settlement/instructions/${cid}/execute`, {}),
   confirm: (cid: string) =>
-    api.post(`/api/settlement/instructions/${cid}/confirm`, {}),
+    api.post(`/api/settlement/${cid}/confirm`, {}),
   accounts: (params?: Record<string, string>) =>
     api.get("/api/settlement/accounts", { params }),
 };

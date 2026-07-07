@@ -77,6 +77,7 @@ export interface NetPosition {
   companyName?: string;
   netAmountSettlement: number;
   currency: string;
+  settlementCurrency:string;
   status: PositionStatus;
   createdAt: string;
 }

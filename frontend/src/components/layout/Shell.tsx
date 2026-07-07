@@ -99,7 +99,7 @@ export default function Shell({ children }: { children: ReactNode }) {
       )}
 
       {/* Main */}
-      <div className="flex-1 flex flex-col lg:ml-60">
+      <div className="flex-1 flex flex-col lg:ml-60  min-w-0">
         {/* Top bar */}
         <header className="h-16 bg-ink-800/80 backdrop-blur border-b border-ink-500 flex items-center px-6 gap-4 sticky top-0 z-20">
           <button
