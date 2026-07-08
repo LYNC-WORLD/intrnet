@@ -8,6 +8,7 @@ import Intrnet.Obligation
 import Intrnet.SettlementInstruction
 import Intrnet.Tests.TestUtils
 import DA.Time (addRelTime, seconds)
+import DA.Foldable (forA_)
 
 testAddAcceptedObligation : Script ()
 testAddAcceptedObligation = do
@@ -100,6 +101,31 @@ testComputeNetPositions = do
   case positionsA of
     [(_, pos)] -> assert (pos.netAmountSettlement == -550000.0)
     _ -> abort "Expected exactly one net position for company A"
+
+testComputeThenMarkAsNetted : Script ()
+testComputeThenMarkAsNetted = do
+  parties <- allocateTestParties
+  eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
+  agreementCid <- createAgreement parties
+  cycleCid <- submit parties.operator do
+    exerciseCmd agreementCid StartNettingCycle with
+      cycleId = "CYCLE-COMPUTE-NETTED"
+      cutoffTime = testNow
+  obCid <- createObligation parties.companyA parties.companyB parties.operator 500000.0 "EUR"
+  acceptedCid <- acceptObligation parties.companyB obCid
+  cycleCid2 <- submit parties.operator do
+    exerciseCmd cycleCid AddObligation with obCid = acceptedCid
+  cycleCid3 <- submit parties.operator do
+    exerciseCmd cycleCid2 ComputeNetPositions with
+      fxRateCids = [("EUR", eurOracleCid)]
+      ackDeadline = addRelTime testNow (seconds 3600)
+  Some computedCycle <- queryContractId parties.operator cycleCid3
+  assert (length computedCycle.obligationCids == 1)
+  forA_ computedCycle.obligationCids $ \obCid ->
+    submit parties.operator do
+      exerciseCmd obCid MarkAsNetted
+  obligations <- query @Obligation parties.operator
+  assert (length (filter (\(_, ob) -> ob.status == "NETTED") obligations) == 1)
 
 testCloseCycle : Script ()
 testCloseCycle = do

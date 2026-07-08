@@ -18,6 +18,14 @@ export interface LegacyArchivedEvent {
   templateId: string;
 }
 
+export interface CreatedEventRef {
+  contractId: string;
+  templateId: string;
+  payload?: Record<string, unknown>;
+}
+
+export type ExerciseEvents = Array<{ created?: CreatedEventRef }>;
+
 export function decodeTokenClaims(token: string): TokenClaims {
   const decoded = jwt.decode(token);
   if (!decoded || typeof decoded === "string") return {};
@@ -107,4 +115,55 @@ export function extractPackageId(templateId: string): string | null {
 
 export function newCommandId(): string {
   return randomUUID();
+}
+
+export function partyInList(parties: string[], partyId: string): boolean {
+  return parties.some(
+    (party) => party === partyId || party.startsWith(`${partyId}::`) || partyId.startsWith(`${party}::`),
+  );
+}
+
+export function extractExerciseContractId(result: unknown): string | null {
+  if (!result) return null;
+  if (typeof result === "string") {
+    const normalized = result.replace(/^#/, "");
+    return normalized.includes(":") ? normalized.split(":")[0]! : normalized;
+  }
+  if (typeof result === "object") {
+    const record = result as Record<string, unknown>;
+    if (typeof record.contractId === "string") return record.contractId;
+    if (typeof record.value === "string") return extractExerciseContractId(record.value);
+  }
+  return null;
+}
+
+export function extractRecreatedContractId(
+  exerciseResult: unknown,
+  events: ExerciseEvents,
+  templateId: string,
+): string | null {
+  const fromResult = extractExerciseContractId(exerciseResult);
+  if (fromResult) {
+    const created = findCreatedEvent(events, templateId);
+    if (!created || created.contractId === fromResult) return fromResult;
+  }
+
+  const created = findCreatedEvent(events, templateId);
+  return created?.contractId ?? extractExerciseContractId(exerciseResult);
+}
+
+export function encodeTuple2<T1, T2>(first: T1, second: T2): { _1: T1; _2: T2 } {
+  return { _1: first, _2: second };
+}
+
+export function findCreatedEvent(
+  events: ExerciseEvents,
+  templateId: string,
+): CreatedEventRef | null {
+  for (const event of events) {
+    if (event.created && matchesTemplate(event.created.templateId, templateId)) {
+      return event.created;
+    }
+  }
+  return null;
 }

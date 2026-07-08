@@ -10,5 +10,6 @@ router.get("/onboarding/requests", authenticateOAuth, requireOperator, adminCont
 router.get("/onboarding/requests/:id", authenticateOAuth, requireOperator, adminController.getOnboardingRequest);
 router.post("/onboarding/requests/:id/approve", authenticateOAuth, requireOperator, adminController.approveOnboardingRequest);
 router.post("/onboarding/requests/:id/reject", authenticateOAuth, requireOperator, adminController.rejectOnboarding);
+router.get("/pqs/health", authenticateOAuth, requireOperator, adminController.pqsHealth);
 
 export default router;

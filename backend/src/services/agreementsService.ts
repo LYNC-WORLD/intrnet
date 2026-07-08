@@ -2,9 +2,15 @@ import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
+import {
+  getAgreementById,
+  getAgreementContractId,
+  listAgreements as pqsListAgreements,
+} from "../repositories/pqsLedgerReadRepository";
 import { ServiceError } from "../utils/http";
+import { auditLedgerCreate } from "./ledgerAudit";
 
-type AgreementPayload = {
+export type AgreementPayload = {
   agreementId?: string;
   participants?: string[];
   settlementCurrency?: string;
@@ -12,23 +18,26 @@ type AgreementPayload = {
   operator?: string;
 };
 
-function toAgreementRecord(contractId: string, payload: AgreementPayload) {
-  if (!payload.agreementId) throw new Error("NettingAgreement payload is missing agreementId");
-  return {
-    agreementId: payload.agreementId,
-    contractId,
-    operator: payload.operator ?? "",
-    settlementCurrency: payload.settlementCurrency ?? "USD",
-    participants: payload.participants ?? [],
-    agreementDate: new Date(payload.agreementDate ?? new Date().toISOString().slice(0, 10)),
-  };
+export async function syncUserAgreementContractId(
+  agreementId: string,
+  contractId: string,
+): Promise<void> {
+  await prisma.user.updateMany({
+    where: { agreementId, status: "ACTIVE" },
+    data: { agreementContractId: contractId },
+  });
 }
 
 export async function createAgreement(input: {
   agreementId: string;
   settlementCurrency: string;
   agreementDate?: string;
-}) {
+}): Promise<ServiceError | { contractId: string; payload: Record<string, unknown> }> {
+  const existing = await getAgreementById(input.agreementId);
+  if (existing) {
+    return { error: `Agreement '${input.agreementId}' already exists`, status: 409 as const };
+  }
+
   const operator = await getOperatorPartyId();
   const client = await operatorClient();
   const created = await client.create({
@@ -43,16 +52,16 @@ export async function createAgreement(input: {
     },
   });
 
-  await upsertAgreementFromLedger(created.contractId, created.payload as AgreementPayload);
+  await auditLedgerCreate(T.NettingAgreement, created.contractId, created.payload, operator);
   return created;
 }
 
 export async function listAgreements() {
-  return prisma.nettingAgreement.findMany({ orderBy: { agreementId: "asc" } });
+  return pqsListAgreements();
 }
 
-export async function getAgreementById(agreementId: string) {
-  const agreement = await prisma.nettingAgreement.findUnique({ where: { agreementId } });
+export async function getAgreementByIdSvc(agreementId: string) {
+  const agreement = await getAgreementById(agreementId);
   if (!agreement) return { error: "Agreement not found", status: 404 as const };
   return { data: agreement };
 }
@@ -60,18 +69,9 @@ export async function getAgreementById(agreementId: string) {
 export async function resolveAgreementContractId(
   agreementId: string,
 ): Promise<ServiceError | { data: string }> {
-  const agreement = await prisma.nettingAgreement.findUnique({ where: { agreementId } });
-  if (!agreement) return { error: "Agreement not found", status: 404 as const };
-  return { data: agreement.contractId };
-}
-
-export async function upsertAgreementFromLedger(contractId: string, payload: AgreementPayload) {
-  const data = toAgreementRecord(contractId, payload);
-  return prisma.nettingAgreement.upsert({
-    where: { agreementId: data.agreementId },
-    create: data,
-    update: data,
-  });
+  const contractId = await getAgreementContractId(agreementId);
+  if (!contractId) return { error: "Agreement not found", status: 404 as const };
+  return { data: contractId };
 }
 
 export async function resolveAgreementFromInput(input: {
@@ -88,12 +88,15 @@ export async function resolveAgreementFromInput(input: {
     return { error: "agreementId or agreementContractId is required", status: 400 as const };
   }
 
+  // Fall back to Ledger API when only a contractId is supplied
   const client = await operatorClient();
   const agreement = await client.fetchById(input.agreementContractId);
   if (!agreement) return { error: "NettingAgreement not found on ledger", status: 404 as const };
 
   const payload = agreement.payload as AgreementPayload;
-  await upsertAgreementFromLedger(agreement.contractId, payload);
+  if (payload.agreementId) {
+    await syncUserAgreementContractId(payload.agreementId, agreement.contractId);
+  }
   return {
     data: {
       agreementId: payload.agreementId ?? "",

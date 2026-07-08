@@ -1,88 +1,73 @@
-import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
-import { isServiceError } from "../utils/http";
+import { extractRecreatedContractId, type ExerciseEvents } from "../ledger/v2";
+import { isServiceError, toConflictError } from "../utils/http";
 import { resolveAgreementFromInput } from "./agreementsService";
 import { computeCycleGateSummary } from "./cycleGateService";
+import { auditLedgerExercise } from "./ledgerAudit";
+import { bulkAddObligations, computeNetPositions } from "./nettingOrchestrator";
 import {
-  bulkAddObligations,
-  computeNetPositions,
-} from "./nettingOrchestrator";
+  getCycleByContractId,
+  getCycleByCycleId,
+  getActivePositionsForCycle,
+  getActiveInstructionsForCycle,
+  getObligationsByContractIds,
+  listCycles as pqsListCycles,
+} from "../repositories/pqsLedgerReadRepository";
 
-function toConflictError(err: unknown) {
-  if (err instanceof Error) return { error: err.message, status: 409 as const };
-  return { error: "Ledger operation failed", status: 409 as const };
+function exerciseResultPayload(
+  newContractId: string,
+  result: { exerciseResult: unknown; events: unknown },
+) {
+  return {
+    newContractId,
+    exerciseResult: result.exerciseResult,
+    events: result.events,
+  };
 }
 
-function nextCycleContractId(events: unknown[]) {
-  const createdCycle = (events as Array<{ created?: { templateId?: string; contractId?: string } }>).find(
-    (event) => event.created?.templateId?.includes("NettingCycle"),
-  );
-  return createdCycle?.created?.contractId;
+async function resolveCycle(contractIdOrCycleId: string) {
+  const byContractId = await getCycleByContractId(contractIdOrCycleId);
+  if (byContractId) return byContractId;
+  return getCycleByCycleId(contractIdOrCycleId);
 }
 
-async function loadSettlementPositionCids(contractId: string) {
-  const cycle = await prisma.nettingCycle.findFirst({ where: { contractId } });
+async function loadSettlementPositionCids(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
 
-  const positions = await prisma.netPosition.findMany({
-    where: {
-      cycleId: cycle.cycleId,
-      status: { not: "ARCHIVED" },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  const latestByParticipant = new Map<string, string>();
-  for (const position of positions) {
-    if (!latestByParticipant.has(position.participant)) {
-      latestByParticipant.set(position.participant, position.contractId);
-    }
-  }
-  return { data: Array.from(latestByParticipant.values()) };
+  const positions = await getActivePositionsForCycle(cycle.cycleId, "ACKNOWLEDGED");
+  return { data: positions.map((p) => p.contractId), cycle };
 }
 
-async function loadSettlementInstructionCids(contractId: string) {
-  const cycle = await prisma.nettingCycle.findFirst({ where: { contractId } });
+async function loadSettlementInstructionCids(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
-  const instructions = await prisma.settlementInstruction.findMany({
-    where: {
-      cycleId: cycle.cycleId,
-      status: { not: "ARCHIVED" },
-    },
-    select: { contractId: true },
-    orderBy: { updatedAt: "desc" },
-  });
-  return { data: instructions.map((instruction) => instruction.contractId) };
+  const instructions = await getActiveInstructionsForCycle(cycle.cycleId);
+  return { data: instructions.map((i) => i.contractId), cycle };
 }
 
-export async function listCycles(role: string, userAgreementId?: string | null, agreementId?: string) {
-  const where: Record<string, unknown> = {};
-  if (role !== "operator") {
-    if (userAgreementId) where.agreementId = userAgreementId;
-  } else if (agreementId) {
-    where.agreementId = agreementId;
-  }
-  return prisma.nettingCycle.findMany({ where, orderBy: { createdAt: "desc" } });
+export async function listCycles(
+  role: string,
+  userAgreementId?: string | null,
+  agreementId?: string,
+) {
+  return pqsListCycles({ role, userAgreementId, agreementId });
 }
 
-export async function getCycle(contractId: string) {
-  const cycle = await prisma.nettingCycle.findFirst({
-    where: { contractId },
-    include: { positions: true },
-  });
+export async function getCycle(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
 
-  const instructions = await prisma.settlementInstruction.findMany({
-    where: { cycleId: cycle.cycleId },
-    select: { status: true },
-  });
+  const positions = await getActivePositionsForCycle(cycle.cycleId);
+  const instructions = await getActiveInstructionsForCycle(cycle.cycleId);
+
   const gateSummary = computeCycleGateSummary({
     status: cycle.status,
     settlementPhase: cycle.settlementPhase,
     ackDeadline: cycle.ackDeadline,
-    positionContractIds: cycle.positionContractIds,
-    positions: cycle.positions,
+    positionContractIds: cycle.positionCids,
+    positions,
     instructions,
   });
 
@@ -92,6 +77,23 @@ export async function getCycle(contractId: string) {
       ...gateSummary,
     },
   };
+}
+
+export async function listCycleObligations(
+  contractIdOrCycleId: string,
+  partyId: string,
+  role: string,
+) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
+  if (!cycle) return { error: "Cycle not found", status: 404 as const };
+
+  const obligations = await getObligationsByContractIds(cycle.obligationCids);
+  const visible =
+    role === "operator"
+      ? obligations
+      : obligations.filter((o) => o.payer === partyId || o.receiver === partyId);
+
+  return { data: { obligations: visible, total: visible.length } };
 }
 
 export async function startCycle(
@@ -104,103 +106,171 @@ export async function startCycle(
   if (isServiceError(resolution)) return resolution;
 
   const client = await operatorClient();
-  return client.exercise({
+  const result = await client.exercise({
     templateId: T.NettingAgreement,
     contractId: resolution.data.agreementContractId,
     choice: "StartNettingCycle",
     argument: { cycleId, cutoffTime },
   });
+
+  await auditLedgerExercise(
+    T.NettingAgreement,
+    "StartNettingCycle",
+    resolution.data.agreementContractId,
+    result.events,
+    { argument: { cycleId, cutoffTime } },
+  );
+
+  const newContractId = extractRecreatedContractId(
+    result.exerciseResult,
+    result.events as ExerciseEvents,
+    T.NettingCycle,
+  );
+  if (!newContractId) {
+    throw new Error("StartNettingCycle did not return a NettingCycle contract id");
+  }
+
+  return {
+    data: {
+      newContractId,
+      cycleContractId: newContractId,
+      exerciseResult: result.exerciseResult,
+      events: result.events,
+    },
+  };
 }
 
-export async function addObligationsToCycle(contractId: string) {
-  const cycle = await prisma.nettingCycle.findFirst({ where: { contractId } });
+export async function addObligationsToCycle(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
-  const newContractId = await bulkAddObligations(contractId, cycle.cycleId, cycle.agreementId);
+  const newContractId = await bulkAddObligations(cycle.contractId, cycle.cycleId, cycle.agreementId);
   return { data: { newContractId } };
 }
 
-export async function computeCyclePositions(contractId: string, ackDeadline?: string) {
-  const cycle = await prisma.nettingCycle.findFirst({ where: { contractId } });
-  if (!cycle) return { error: "Cycle not found", status: 404 as const };
-
-  const resolvedAckDeadline = ackDeadline ?? cycle.cutoffTime.toISOString();
+export async function computeCyclePositions(contractIdOrCycleId: string, ackDeadline?: string) {
   try {
-    const result = await computeNetPositions(contractId, resolvedAckDeadline);
-    return {
-      data: {
-        ...result,
-        newContractId: nextCycleContractId(result.events),
-      },
-    };
+    const cycle = await resolveCycle(contractIdOrCycleId);
+    if (!cycle) return { error: "Cycle not found", status: 404 as const };
+
+    const resolvedAckDeadline =
+      ackDeadline ??
+      (Number.isNaN(cycle.cutoffTime.getTime())
+        ? null
+        : cycle.cutoffTime.toISOString());
+    if (!resolvedAckDeadline) {
+      return { error: "Invalid cycle cutoffTime; pass ackDeadline in the request body", status: 400 as const };
+    }
+
+    const result = await computeNetPositions(cycle.contractId, resolvedAckDeadline);
+    return { data: { newContractId: result.newContractId } };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
-export async function settleCycle(contractId: string) {
-  const positionResult = await loadSettlementPositionCids(contractId);
+export async function settleCycle(contractIdOrCycleId: string) {
+  const positionResult = await loadSettlementPositionCids(contractIdOrCycleId);
   if (isServiceError(positionResult)) return positionResult;
 
   try {
     const client = await operatorClient();
     const result = await client.exercise({
       templateId: T.NettingCycle,
-      contractId,
+      contractId: positionResult.cycle.contractId,
       choice: "SettleCycle",
       argument: { positionCids: positionResult.data },
     });
-    return {
-      data: {
-        ...result,
-        newContractId: nextCycleContractId(result.events),
-      },
-    };
+
+    await auditLedgerExercise(
+      T.NettingCycle,
+      "SettleCycle",
+      positionResult.cycle.contractId,
+      result.events,
+      { argument: { positionCids: positionResult.data } },
+    );
+
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as ExerciseEvents,
+      T.NettingCycle,
+    );
+    if (!newContractId) {
+      throw new Error("SettleCycle did not return an updated NettingCycle contract id");
+    }
+
+    return { data: exerciseResultPayload(newContractId, result) };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
-export async function forceSettleCycle(contractId: string) {
-  const positionResult = await loadSettlementPositionCids(contractId);
+export async function forceSettleCycle(contractIdOrCycleId: string) {
+  const positionResult = await loadSettlementPositionCids(contractIdOrCycleId);
   if (isServiceError(positionResult)) return positionResult;
 
   try {
     const client = await operatorClient();
     const result = await client.exercise({
       templateId: T.NettingCycle,
-      contractId,
+      contractId: positionResult.cycle.contractId,
       choice: "ForceSettleCycle",
       argument: { positionCids: positionResult.data },
     });
-    return {
-      data: {
-        ...result,
-        newContractId: nextCycleContractId(result.events),
-      },
-    };
+
+    await auditLedgerExercise(
+      T.NettingCycle,
+      "ForceSettleCycle",
+      positionResult.cycle.contractId,
+      result.events,
+      { argument: { positionCids: positionResult.data } },
+    );
+
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as ExerciseEvents,
+      T.NettingCycle,
+    );
+    if (!newContractId) {
+      throw new Error("ForceSettleCycle did not return an updated NettingCycle contract id");
+    }
+
+    return { data: exerciseResultPayload(newContractId, result) };
   } catch (err) {
     return toConflictError(err);
   }
 }
 
-export async function closeCycle(contractId: string) {
-  const instructionResult = await loadSettlementInstructionCids(contractId);
+export async function closeCycle(contractIdOrCycleId: string) {
+  const instructionResult = await loadSettlementInstructionCids(contractIdOrCycleId);
   if (isServiceError(instructionResult)) return instructionResult;
 
   try {
     const client = await operatorClient();
     const result = await client.exercise({
       templateId: T.NettingCycle,
-      contractId,
+      contractId: instructionResult.cycle.contractId,
       choice: "CloseCycle",
       argument: { settlementInstructionCids: instructionResult.data },
     });
-    return {
-      data: {
-        ...result,
-        newContractId: nextCycleContractId(result.events),
-      },
-    };
+
+    await auditLedgerExercise(
+      T.NettingCycle,
+      "CloseCycle",
+      instructionResult.cycle.contractId,
+      result.events,
+      { argument: { settlementInstructionCids: instructionResult.data } },
+    );
+
+    const newContractId = extractRecreatedContractId(
+      result.exerciseResult,
+      result.events as ExerciseEvents,
+      T.NettingCycle,
+    );
+    if (!newContractId) {
+      throw new Error("CloseCycle did not return an updated NettingCycle contract id");
+    }
+
+    return { data: exerciseResultPayload(newContractId, result) };
   } catch (err) {
     return toConflictError(err);
   }

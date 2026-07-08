@@ -4,12 +4,66 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        PORT: ${PORT:-3001}
+        PORT: ${PORT}
     container_name: intrnet-backend
     restart: unless-stopped
     ports:
-      - "${PORT:-3001}:${PORT:-3001}"
+      - "${PORT}:${PORT}"
     env_file:
       - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "json-ledger-api.localhost:host-gateway"
+      - "grpc-ledger-api.localhost:host-gateway"
+    depends_on:
+      pqs:
+        condition: service_started
+
+  pqs:
+    image: ${PQS_IMAGE}
+    container_name: intrnet-pqs
+    restart: unless-stopped
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "json-ledger-api.localhost:host-gateway"
+      - "grpc-ledger-api.localhost:host-gateway"
+    command:
+      - pipeline
+      - ledger
+      - postgres-document
+      - --source-ledger-host
+      - ${PQS_LEDGER_HOST}
+      - --source-ledger-port
+      - ${PQS_LEDGER_PORT}
+      - --source-ledger-auth
+      - OAuth
+      - --pipeline-oauth-clientid
+      - ${LEDGER_OAUTH_CLIENT_ID}
+      - --pipeline-oauth-clientsecret
+      - ${LEDGER_OAUTH_CLIENT_SECRET}
+      - --pipeline-oauth-endpoint
+      - ${LEDGER_OAUTH_TOKEN_URL}
+      - --pipeline-oauth-scope
+      - ${LEDGER_OAUTH_SCOPE}
+      - --pipeline-oauth-parameters-audience
+      - ${LEDGER_OAUTH_AUDIENCE}
+      - --pipeline-filter-parties
+      - ${PQS_FILTER_PARTIES}
+      - --pipeline-ledger-start
+      - ${PQS_LEDGER_START}
+      - --pipeline-ledger-stop
+      - Never
+      - --target-postgres-host
+      - ${PQS_POSTGRES_HOST}
+      - --target-postgres-port
+      - ${PQS_POSTGRES_PORT}
+      - --target-postgres-database
+      - ${PQS_DB_NAME}
+      - --target-postgres-username
+      - ${PQS_DB_USER}
+      - --target-postgres-password
+      - ${PQS_DB_PASSWORD}
+      - --health-port
+      - ${PQS_HEALTH_PORT}

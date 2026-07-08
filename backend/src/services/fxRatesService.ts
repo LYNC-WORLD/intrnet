@@ -2,16 +2,13 @@ import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
+import { extractRecreatedContractId } from "../ledger/v2";
+import { listFxRates as pqsListFxRates } from "../repositories/pqsLedgerReadRepository";
+import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 import { refreshFxRates } from "./fxOracle";
 
 export async function listFxRates(fromCurrency?: string, toCurrency?: string) {
-  const where: any = {};
-  if (fromCurrency) where.fromCurrency = fromCurrency;
-  if (toCurrency) where.toCurrency = toCurrency;
-  return prisma.fxRate.findMany({
-    where,
-    orderBy: [{ fromCurrency: "asc" }, { toCurrency: "asc" }],
-  });
+  return pqsListFxRates(fromCurrency, toCurrency);
 }
 
 export async function createFxRate(params: {
@@ -23,7 +20,7 @@ export async function createFxRate(params: {
   const { fromCurrency, toCurrency, rate, asOf } = params;
   const operatorPartyId = await getOperatorPartyId();
   const client = await operatorClient();
-  return client.create({
+  const created = await client.create({
     templateId: T.FxRateOracle,
     payload: {
       operator: operatorPartyId,
@@ -33,11 +30,25 @@ export async function createFxRate(params: {
       asOf: asOf ?? new Date().toISOString(),
     },
   });
+
+  await auditLedgerCreate(T.FxRateOracle, created.contractId, created.payload, operatorPartyId);
+
+  await prisma.fxRateHistory.create({
+    data: {
+      contractId: created.contractId,
+      fromCurrency,
+      toCurrency,
+      rate: String(rate),
+      asOf: new Date(asOf ?? new Date().toISOString()),
+    },
+  }).catch(console.error);
+
+  return created;
 }
 
 export async function updateFxRate(contractId: string, rate: number | string, asOf?: string) {
   const client = await operatorClient();
-  return client.exercise({
+  const result = await client.exercise({
     templateId: T.FxRateOracle,
     contractId,
     choice: "UpdateRate",
@@ -46,6 +57,33 @@ export async function updateFxRate(contractId: string, rate: number | string, as
       newAsOf: asOf ?? new Date().toISOString(),
     },
   });
+
+  const newContractId = extractRecreatedContractId(
+    result.exerciseResult,
+    result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+    T.FxRateOracle,
+  );
+  const newEvent = (result.events as Array<{ created?: { contractId: string; payload: Record<string, unknown> } }>)
+    .find((e) => e.created?.payload)?.created;
+  if (newEvent) {
+    await auditLedgerExercise(T.FxRateOracle, "UpdateRate", contractId, result.events);
+    const p = newEvent.payload;
+    await prisma.fxRateHistory.create({
+      data: {
+        contractId: newEvent.contractId,
+        fromCurrency: p.fromCurrency as string,
+        toCurrency: p.toCurrency as string,
+        rate: String(rate),
+        asOf: new Date((p.asOf as string) ?? asOf ?? new Date().toISOString()),
+      },
+    }).catch(console.error);
+  }
+
+  return {
+    newContractId,
+    exerciseResult: result.exerciseResult,
+    events: result.events,
+  };
 }
 
 export async function refreshRates() {

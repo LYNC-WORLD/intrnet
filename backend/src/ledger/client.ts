@@ -46,6 +46,14 @@ export function partyActReadRights(partyId: string): LedgerRight[] {
 type V2Event = Record<string, unknown>;
 type TokenResolver = () => Promise<string>;
 
+function requireConfiguredOperatorParty(): string {
+  const party = process.env.OPERATOR_PARTY?.trim();
+  if (!party) {
+    throw new Error("OPERATOR_PARTY is required for operator ledger commands");
+  }
+  return party;
+}
+
 export class LedgerClient {
   private http: AxiosInstance;
   private token: string | null;
@@ -54,10 +62,16 @@ export class LedgerClient {
   private packageId: string | null = process.env.INTRNET_PACKAGE_ID ?? null;
   private partyCache: string[] | null = null;
   private streamTimer: ReturnType<typeof setInterval> | null = null;
+  private actAsParty: string | null;
 
-  constructor(auth: string | TokenResolver, baseURL: string = process.env.LEDGER_API_URL!) {
+  constructor(
+    auth: string | TokenResolver,
+    baseURL: string = process.env.LEDGER_API_URL!,
+    actAsParty?: string,
+  ) {
     this.token = typeof auth === "string" ? auth : null;
     this.tokenResolver = typeof auth === "function" ? auth : null;
+    this.actAsParty = actAsParty?.trim() || null;
     this.claims = decodeTokenClaims(this.token ?? "");
     const defaultTimeout = Number(process.env.LEDGER_HTTP_TIMEOUT_MS ?? 120000);
     this.http = axios.create({
@@ -102,21 +116,26 @@ export class LedgerClient {
     }
   }
 
-  private commandUserId(): string {
-    return (
-      process.env.LEDGER_API_ADMIN_USER?.trim() ||
-      process.env.OPERATOR_LEDGER_USER_ID?.trim() ||
-      this.claims.sub ||
-      ""
-    );
+  private async commandUserId(): Promise<string> {
+    if (this.tokenResolver) {
+      const configuredUserId = process.env.LEDGER_API_ADMIN_USER?.trim();
+      if (configuredUserId) return configuredUserId;
+
+      const token = await this.getToken();
+      if (token) this.setToken(token);
+      if (this.claims.sub) return this.claims.sub;
+
+      throw new Error("LEDGER_API_ADMIN_USER is required when the operator token has no sub claim");
+    }
+
+    if (this.claims.sub) return this.claims.sub;
+    throw new Error("User OAuth token has no sub claim; cannot submit ledger command");
   }
 
   private async resolveParties(parties: string[] = []): Promise<string[]> {
     let source = parties.length ? parties : (this.claims.actAs ?? []);
-    // OAuth client-credentials tokens (validator devnet) carry no actAs claims.
-    if (!source.length) {
-      const hint = process.env.OPERATOR_PARTY?.trim();
-      if (hint) source = [hint];
+    if (!source.length && this.actAsParty) {
+      source = [this.actAsParty];
     }
 
     const resolved: string[] = [];
@@ -126,13 +145,16 @@ export class LedgerClient {
         continue;
       }
       const found = await this.findPartyByHint(party);
-      resolved.push(found ?? party);
+      if (!found) {
+        throw new Error(`Could not resolve local party hint '${party}'`);
+      }
+      resolved.push(found);
     }
 
     const unique = [...new Set(resolved)];
     if (!unique.length) {
       throw new Error(
-        "No actAs parties available (set OPERATOR_PARTY or use a token with actAs claims)",
+        "No actAs parties available; pass an explicit acting party or use a token with actAs claims",
       );
     }
     return unique;
@@ -208,7 +230,7 @@ export class LedgerClient {
     const body = {
       commands: {
         commandId: newCommandId(),
-        userId: this.commandUserId(),
+        userId: await this.commandUserId(),
         actAs,
         readAs,
         commands,
@@ -342,7 +364,6 @@ export class LedgerClient {
     if (cached) return cached;
 
     let pageToken: string | undefined;
-    let fallback: string | null = null;
 
     do {
       const path = pageToken
@@ -360,14 +381,12 @@ export class LedgerClient {
           cachePartyByHint(hint, entry.party);
           return entry.party;
         }
-        if (!fallback) fallback = entry.party;
       }
 
       pageToken = res.data.nextPageToken as string | undefined;
     } while (pageToken);
 
-    if (fallback) cachePartyByHint(hint, fallback);
-    return fallback;
+    return null;
   }
 
   async userExists(userId: string): Promise<boolean> {
@@ -508,6 +527,8 @@ export class LedgerClient {
   }
 }
 
-export const partyClient = (token: string) => new LedgerClient(token);
-export const operatorAdminClient = async () => new LedgerClient(getOperatorLedgerToken);
-export const operatorClient = async () => new LedgerClient(getOperatorLedgerToken);
+export const partyClient = (token: string, actAsParty: string) => new LedgerClient(token, undefined, actAsParty);
+export const operatorAdminClient = async () =>
+  new LedgerClient(getOperatorLedgerToken, undefined, requireConfiguredOperatorParty());
+export const operatorClient = async () =>
+  new LedgerClient(getOperatorLedgerToken, undefined, requireConfiguredOperatorParty());

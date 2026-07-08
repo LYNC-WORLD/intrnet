@@ -33,6 +33,8 @@ testStartNettingCycle = do
   Some cycle <- queryContractId parties.operator cycleCid
   assert (cycle.status == "OPEN")
   assert (cycle.cycleId == "CYCLE-001")
+  Some agr <- queryContractId parties.operator agreementCid
+  assert (agr.agreementId == "AGREEMENT-2025-001")
 
 testStartNettingCycleRequiresTwoParticipants : Script ()
 testStartNettingCycleRequiresTwoParticipants = do

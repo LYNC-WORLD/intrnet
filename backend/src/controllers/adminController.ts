@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import * as adminService from "../services/adminService";
+import { pqsHealthCheck } from "../repositories/pqsLedgerReadRepository";
 import { asyncHandler } from "../utils/asyncHandler";
 
 export const listCompanies = asyncHandler(async (req: Request, res: Response) => {
@@ -51,4 +52,10 @@ export const rejectOnboarding = asyncHandler(async (req: Request, res: Response)
   if (!reason) return res.status(400).json({ error: "reason is required" });
   const result = await adminService.rejectRequest(requestId, req.user.userId, reason);
   return res.json({ success: true, data: result });
+});
+
+export const pqsHealth = asyncHandler(async (_req: Request, res: Response) => {
+  const result = await pqsHealthCheck();
+  const statusCode = result.connected ? 200 : 503;
+  return res.status(statusCode).json({ success: result.connected, data: result });
 });

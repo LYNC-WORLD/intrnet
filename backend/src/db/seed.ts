@@ -6,12 +6,7 @@ async function main() {
   const email = process.env.OPERATOR_EMAIL ?? "operator@intrnet.local";
   const oauthSub = process.env.OPERATOR_OAUTH_SUB?.trim() || null;
 
-  let partyId = process.env.OPERATOR_PARTY ?? "operator";
-  try {
-    partyId = await getOperatorPartyId();
-  } catch (err) {
-    console.warn("[Seed] Could not resolve operator party on ledger, using OPERATOR_PARTY env:", err);
-  }
+  const partyId = await getOperatorPartyId();
 
   await prisma.user.upsert({
     where: { email },
@@ -29,7 +24,7 @@ async function main() {
       companyName: "Intrnet Operator",
       partyId,
       oauthSub,
-      ledgerUserId: process.env.OPERATOR_LEDGER_USER_ID ?? null,
+      ledgerUserId: process.env.LEDGER_API_ADMIN_USER ?? null,
     },
   });
 
