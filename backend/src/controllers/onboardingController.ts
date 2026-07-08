@@ -10,6 +10,7 @@ export const submitMyRequest = asyncHandler(async (req: Request, res: Response) 
     phone,
     country,
     partyHint,
+    referenceEmail,
   } = req.body as {
     email?: string;
     companyName?: string;
@@ -17,6 +18,7 @@ export const submitMyRequest = asyncHandler(async (req: Request, res: Response) 
     phone?: string;
     country?: string;
     partyHint?: string;
+    referenceEmail: string;
   };
 
   if (!email) return res.status(400).json({ error: "email is required" });
@@ -29,6 +31,21 @@ export const submitMyRequest = asyncHandler(async (req: Request, res: Response) 
     phone,
     country,
     partyHint,
+    referenceEmail,
   });
+  return res.json({ success: true, data: request });
+});
+
+export const verityEmail = asyncHandler(async (req: Request, res: Response) => {
+  const {
+    email,
+  } = req.body as {
+    email?: string;
+  };
+
+  if (!email) return res.status(400).json({ error: "email is required" });
+
+  const request = await onboardingService.verifyOnboardEmail(email);
+  
   return res.json({ success: true, data: request });
 });

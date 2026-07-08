@@ -5,7 +5,10 @@ import { T } from "../ledger/templateIds";
 import { ValidatorCantonAdapter } from "../canton/validatorAdapter";
 import { slugify } from "../utils/crypto";
 import { isServiceError } from "../utils/http";
-import { resolveAgreementFromInput, upsertAgreementFromLedger } from "./agreementsService";
+import {
+  resolveAgreementFromInput,
+  upsertAgreementFromLedger,
+} from "./agreementsService";
 
 export interface OnboardingFormInput {
   email: string;
@@ -14,6 +17,7 @@ export interface OnboardingFormInput {
   phone?: string;
   country?: string;
   partyHint?: string;
+  referenceEmail?: string;
 }
 
 export interface ApproveOnboardingInput {
@@ -33,10 +37,14 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-export async function submitOnboardingRequest(userId: string, input: OnboardingFormInput) {
+export async function submitOnboardingRequest(
+  userId: string,
+  input: OnboardingFormInput,
+) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error("User not found");
-  if (user.role !== "participant") throw new Error("Operators cannot create onboarding requests");
+  if (user.role !== "participant")
+    throw new Error("Operators cannot create onboarding requests");
   if (user.status === "ACTIVE") throw new Error("User is already approved");
 
   const email = normalizeEmail(input.email);
@@ -46,6 +54,18 @@ export async function submitOnboardingRequest(userId: string, input: OnboardingF
     where: { email, NOT: { id: userId } },
   });
   if (emailTaken) throw new Error("Email is already linked to another account");
+
+  // reference email and agreementId
+  const referenceEmail = input.referenceEmail;
+  let referenceData;
+  if(referenceEmail){
+    referenceData = await prisma.user.findUnique({
+      select: {agreementId: true},
+      where: {
+        email: referenceEmail,
+      }
+    })
+  }
 
   await prisma.user.update({
     where: { id: userId },
@@ -61,6 +81,8 @@ export async function submitOnboardingRequest(userId: string, input: OnboardingF
       country: input.country,
       partyHint: input.partyHint,
       state: "SUBMITTED",
+      referenceEmail: referenceEmail,
+      referenceAgreementId: referenceData?.agreementId,
     },
     create: {
       userId,
@@ -70,8 +92,30 @@ export async function submitOnboardingRequest(userId: string, input: OnboardingF
       country: input.country,
       partyHint: input.partyHint,
       state: "SUBMITTED",
+      referenceEmail: referenceEmail,
+      referenceAgreementId: referenceData?.agreementId,
     },
   });
+}
+
+export async function verifyOnboardEmail(email: string) {
+  if (!isValidEmail(email)) throw new Error("A valid email is required");
+
+  const normalizedEmail = normalizeEmail(email);
+
+  const user = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
+  if (!user) throw new Error("Email not registered");
+  if (user.status === "ACTIVE" && user.role == "participant") {
+    return {
+      success: true,
+      message: `Email found, ${email} is whitelisted`,
+    };
+  }
+  else{
+    throw new Error("Email not registered");
+  }
 }
 
 export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
@@ -85,10 +129,13 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   }
 
   const user = request.user;
-  if (user.role !== "participant") throw new Error("Only participant requests can be approved");
+  if (user.role !== "participant")
+    throw new Error("Only participant requests can be approved");
   if (!user.oauthSub) throw new Error("User has no OAuth subject linked");
 
-  const hint = slugify(input.partyHint || request.partyHint || request.companyName);
+  const hint = slugify(
+    input.partyHint || request.partyHint || request.companyName,
+  );
   if (!hint) throw new Error("partyHint/companyName must produce a valid slug");
 
   const adapter = new ValidatorCantonAdapter();
@@ -119,16 +166,24 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
       argument: { newParticipant: partyId },
     });
 
-    const created = (result.events as Array<{ created?: { contractId: string; payload?: Record<string, unknown> } }>).find(
-      (event) => event.created,
-    );
+    const created = (
+      result.events as Array<{
+        created?: { contractId: string; payload?: Record<string, unknown> };
+      }>
+    ).find((event) => event.created);
     if (created?.created?.contractId && created.created.payload) {
       await upsertAgreementFromLedger(created.created.contractId, {
         agreementId: created.created.payload.agreementId as string | undefined,
         operator: created.created.payload.operator as string | undefined,
-        settlementCurrency: created.created.payload.settlementCurrency as string | undefined,
-        participants: created.created.payload.participants as string[] | undefined,
-        agreementDate: created.created.payload.agreementDate as string | undefined,
+        settlementCurrency: created.created.payload.settlementCurrency as
+          | string
+          | undefined,
+        participants: created.created.payload.participants as
+          | string[]
+          | undefined,
+        agreementDate: created.created.payload.agreementDate as
+          | string
+          | undefined,
       });
     }
   }
@@ -136,7 +191,9 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   const operatorPartyId = await getOperatorPartyId();
   const currency = process.env.APP_DEFAULT_CURRENCY ?? "USD";
   const existingAccount = (await client.query(T.CashAccount)).find(
-    (account) => account.payload.owner === partyId && account.payload.currency === currency,
+    (account) =>
+      account.payload.owner === partyId &&
+      account.payload.currency === currency,
   );
   if (!existingAccount) {
     await client.create({
@@ -144,7 +201,9 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
       payload: {
         owner: partyId,
         currency,
-        balance: input.initialBalance ?? String(process.env.ONBOARDING_INITIAL_BALANCE ?? "0"),
+        balance:
+          input.initialBalance ??
+          String(process.env.ONBOARDING_INITIAL_BALANCE ?? "0"),
         operator: operatorPartyId,
       },
     });
@@ -181,7 +240,11 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   };
 }
 
-export async function rejectOnboardingRequest(requestId: string, approverUserId: string, reason: string) {
+export async function rejectOnboardingRequest(
+  requestId: string,
+  approverUserId: string,
+  reason: string,
+) {
   const request = await prisma.onboardingRequest.findUnique({
     where: { id: requestId },
     select: { id: true, userId: true },

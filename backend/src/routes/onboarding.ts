@@ -5,5 +5,6 @@ import { authenticateOAuth } from "../middleware/auth";
 const router = Router();
 
 router.post("/submit", authenticateOAuth, onboardingController.submitMyRequest);
+router.post("/verify-email", authenticateOAuth, onboardingController.verityEmail);
 
 export default router;

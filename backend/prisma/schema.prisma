@@ -35,6 +35,8 @@ model OnboardingRequest {
   phone            String?
   country          String?
   partyHint        String?
+  referenceEmail   String?
+  referenceAgreementId String?
   state            String   @default("DRAFT")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
