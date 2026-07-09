@@ -1,7 +1,11 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import toast from "react-hot-toast";
-import { obligationsApi } from "../../services/api";
+import {
+  useObligations,
+  useAcceptObligation,
+  useRejectObligation,
+} from "../../hooks/queries";
 import { Obligation } from "../../types";
 import {
   Card,
@@ -19,6 +23,7 @@ import {
 } from "../../components/ui";
 import { fmt } from "../../utils";
 import { useAuth } from "@/context/AuthContext";
+import { useDebounce } from "@/hooks";
 
 const TABS = [
   { key: "all", label: "All" },
@@ -44,81 +49,76 @@ const STATUSES = [
 
 export default function Obligations() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "all";
-  const [obligations, setObligations] = useState<Obligation[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
   const [currency, setCurrency] = useState("");
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
-  const { user } = useAuth();
-
+  const debouncedSearch = useDebounce(search, 300);
   const limit = 20;
 
-  const load = useCallback(() => {
-    setLoading(true);
-    const query: Record<string, string | number | undefined> = { page, limit };
-    if (currency) query.currency = currency;
-    if (status) query.status = status;
-    if (tab === "payer") query.role = "payer";
-    if (tab === "receiver") query.role = "receiver";
-    if (tab === "pending") {
-      query.status = "PENDING";
-      query.role = "receiver";
-    }
+  const queryParams: Record<string, string | number | undefined> = {
+    page,
+    limit,
+  };
+  if (currency) queryParams.currency = currency;
+  if (status) queryParams.status = status;
+  if (tab === "payer") queryParams.role = "payer";
+  if (tab === "receiver") queryParams.role = "receiver";
+  if (tab === "pending") {
+    queryParams.status = "PENDING";
+    queryParams.role = "receiver";
+  }
 
-    obligationsApi
-      .list(query)
-      .then((res) => {
-        let list: Obligation[] = res.data?.obligations ?? res.data ?? [];
-        if (search)
-          list = list.filter((o) =>
-            o.invoiceRef.toLowerCase().includes(search.toLowerCase()),
-          );
-        setObligations(list);
-        setTotal(res.data?.total ?? list.length);
-      })
-      .finally(() => setLoading(false));
-  }, [page, currency, status, tab, search]);
+  const { data, isLoading } = useObligations(queryParams);
+  const acceptMutation = useAcceptObligation();
+  const rejectMutation = useRejectObligation();
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  let obligations: Obligation[] = data?.obligations ?? data ?? [];
+  const total: number = data?.total ?? obligations.length;
+  if (debouncedSearch)
+    obligations = obligations.filter((o) =>
+      o.invoiceRef.toLowerCase().includes(debouncedSearch.toLowerCase()),
+    );
 
-  const handleAccept = async (cid: string) => {
-    try {
-      await obligationsApi.accept(cid);
-      setObligations((o) =>
-        o.map((x) => (x.contractId === cid ? { ...x, status: "ACCEPTED" } : x)),
-      );
-      toast.success("Obligation accepted");
-    } catch {
-      toast.error("Failed to accept");
-    }
+  const handleAccept = (cid: string) => {
+    acceptMutation.mutate(cid, {
+      onSuccess: () => toast.success("Obligation accepted"),
+      onError: () => toast.error("Failed to accept"),
+    });
   };
 
-  const handleReject = async (cid: string) => {
+  const handleReject = (cid: string) => {
     const reason = prompt("Reason for rejection:");
     if (!reason) return;
-    try {
-      await obligationsApi.reject(cid, reason);
-      setObligations((o) =>
-        o.map((x) => (x.contractId === cid ? { ...x, status: "REJECTED" } : x)),
-      );
-      toast.success("Obligation rejected");
-    } catch {
-      toast.error("Failed to reject");
-    }
+    rejectMutation.mutate(
+      { cid, reason },
+      {
+        onSuccess: () => toast.success("Obligation rejected"),
+        onError: () => toast.error("Failed to reject"),
+      },
+    );
   };
 
   const exportCsv = () => {
     const rows = [
-      ["Invoice Ref", "Counterparty", "Amount", "Currency", "Status", "Date"],
+      [
+        "Invoice Ref",
+        "Direction",
+        "Counterparty",
+        "Amount",
+        "Currency",
+        "Status",
+        "Date",
+      ],
       ...obligations.map((o) => [
         o.invoiceRef,
-        o.receiverName ?? o.payerName ?? "",
+        user?.partyId === o.payer ? "Pay" : "Receive",
+        user?.partyId === o.payer
+          ? o.receiver.split("::")[0]
+          : o.payer.split("::")[0],
         String(o.amount),
         o.currency,
         o.status,
@@ -143,7 +143,6 @@ export default function Obligations() {
         </Button>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 border-b border-ink-500 overflow-x-auto">
         {TABS.map((t) => (
           <button
@@ -163,22 +162,23 @@ export default function Obligations() {
         ))}
       </div>
 
-      {/* Filters */}
       <Card>
-        <CardBody className="flex flex-wrap gap-3 items-end">
-          <div className="w-40">
-            <Select
-              options={CURRENCIES}
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-            />
-          </div>
-          <div className="w-40">
-            <Select
-              options={STATUSES}
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            />
+        <CardBody className="flex flex-wrap gap-3 items-end !px-4">
+          <div className="flex gap-3 w-full sm:w-auto">
+            <div className="flex-1 sm:w-40">
+              <Select
+                options={CURRENCIES}
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+              />
+            </div>
+            <div className="flex-1 sm:w-40">
+              <Select
+                options={STATUSES}
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+              />
+            </div>
           </div>
           <div className="flex-1 min-w-[180px]">
             <Input
@@ -193,10 +193,9 @@ export default function Obligations() {
         </CardBody>
       </Card>
 
-      {/* Table */}
       <Card>
         <CardBody className="p-0">
-          {loading ? (
+          {isLoading ? (
             <PageLoader />
           ) : obligations.length === 0 ? (
             <EmptyState message="No obligations found" icon="📄" />
@@ -215,73 +214,87 @@ export default function Obligations() {
                 </tr>
               </thead>
               <tbody>
-                {obligations.map((o) => (
-                  <Tr key={o.contractId}>
-                    <Td>
-                      <Link
-                        to={`/obligations/${o.contractId}`}
-                        className="text-lime-400 hover:text-lime-300 hover:underline font-medium"
-                      >
-                        {o.invoiceRef}
-                      </Link>
-                    </Td>
-                    <Td>
-                      {user?.partyId === o.payer ? (
-                        <span className="text-red-400 font-medium text-xs">
-                          ↑ Pay
-                        </span>
-                      ) : (
-                        <span className="text-emerald-400 font-medium text-xs">
-                          ↓ Receive
-                        </span>
-                      )}
-                    </Td>
-                    <Td>
-                      {user?.partyId === o.payer
-                        ? o.receiver.split("::")[0]
-                        : o.payer.split("::")[0]}
-                    </Td>
-                    <Td>{fmt.number(o.amount)}</Td>
-                    <Td>{o.currency}</Td>
-                    <Td>
-                      <Badge status={o.status} />
-                    </Td>
-                    <Td>{fmt.dateShort(o.createdAt)}</Td>
-                    <Td>
-                      {o.status === "PENDING" && o.payer !== user?.partyId ? (
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => handleAccept(o.contractId)}
-                          >
-                            Accept
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            onClick={() => handleReject(o.contractId)}
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      ) : (
+                {obligations.map((o) => {
+                  // Track which specific row's button is mid-mutation so only
+                  // that row shows a spinner, not the whole table.
+                  const isAccepting =
+                    acceptMutation.isPending &&
+                    acceptMutation.variables === o.contractId;
+                  const isRejecting =
+                    rejectMutation.isPending &&
+                    rejectMutation.variables?.cid === o.contractId;
+
+                  return (
+                    <Tr key={o.contractId}>
+                      <Td>
                         <Link
                           to={`/obligations/${o.contractId}`}
-                          className="text-sm text-bone-500 hover:text-lime-400"
+                          className="text-lime-400 hover:text-lime-300 hover:underline font-medium"
                         >
-                          View
+                          {o.invoiceRef}
                         </Link>
-                      )}
-                    </Td>
-                  </Tr>
-                ))}
+                      </Td>
+                      <Td>
+                        {user?.partyId === o.payer ? (
+                          <span className="text-red-400 font-medium text-xs">
+                            ↑ Pay
+                          </span>
+                        ) : (
+                          <span className="text-emerald-400 font-medium text-xs">
+                            ↓ Receive
+                          </span>
+                        )}
+                      </Td>
+                      <Td>
+                        {user?.partyId === o.payer
+                          ? o.receiver.split("::")[0]
+                          : o.payer.split("::")[0]}
+                      </Td>
+                      <Td>{fmt.number(o.amount)}</Td>
+                      <Td>{o.currency}</Td>
+                      <Td>
+                        <Badge status={o.status} />
+                      </Td>
+                      <Td>{fmt.dateShort(o.createdAt)}</Td>
+                      <Td>
+                        {o.status === "PENDING" && o.payer !== user?.partyId ? (
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => handleAccept(o.contractId)}
+                              loading={isAccepting}
+                              disabled={isRejecting}
+                            >
+                              Accept
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              onClick={() => handleReject(o.contractId)}
+                              loading={isRejecting}
+                              disabled={isAccepting}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        ) : (
+                          <Link
+                            to={`/obligations/${o.contractId}`}
+                            className="text-sm text-bone-500 hover:text-lime-400"
+                          >
+                            View
+                          </Link>
+                        )}
+                      </Td>
+                    </Tr>
+                  );
+                })}
               </tbody>
             </Table>
           )}
         </CardBody>
       </Card>
 
-      {/* Pagination */}
       {total > limit && (
         <div className="flex justify-center gap-2">
           <Button

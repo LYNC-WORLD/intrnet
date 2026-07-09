@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import toast from "react-hot-toast";
-import { obligationsApi } from "../../services/api";
-import { Obligation } from "../../types";
+import {
+  useObligation,
+  useAcceptObligation,
+  useRejectObligation,
+} from "../../hooks/queries";
 import {
   Card,
   CardHeader,
@@ -17,43 +19,40 @@ import { useAuth } from "@/context/AuthContext";
 export default function ObligationDetail() {
   const { contractId } = useParams<{ contractId: string }>();
   const navigate = useNavigate();
-  const [obligation, setObligation] = useState<Obligation | null>(null);
-  const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
-  useEffect(() => {
-    if (!contractId) return;
-    obligationsApi
-      .get(contractId)
-      .then((res) => setObligation(res.data))
-      .finally(() => setLoading(false));
-  }, [contractId]);
+  const { data: obligation, isLoading } = useObligation(contractId ?? "");
+  const acceptMutation = useAcceptObligation();
+  const rejectMutation = useRejectObligation();
 
-  const handleAccept = async () => {
+  const handleAccept = () => {
     if (!contractId) return;
-    try {
-      await obligationsApi.accept(contractId);
-      toast.success("Obligation accepted");
-      navigate("/obligations");
-    } catch {
-      toast.error("Failed to accept");
-    }
+    acceptMutation.mutate(contractId, {
+      onSuccess: () => {
+        toast.success("Obligation accepted");
+        navigate("/obligations");
+      },
+      onError: () => toast.error("Failed to accept"),
+    });
   };
 
-  const handleReject = async () => {
+  const handleReject = () => {
     if (!contractId) return;
     const reason = prompt("Reason for rejection:");
     if (!reason) return;
-    try {
-      await obligationsApi.reject(contractId, reason);
-      toast.success("Obligation rejected");
-      navigate("/obligations");
-    } catch {
-      toast.error("Failed to reject");
-    }
+    rejectMutation.mutate(
+      { cid: contractId, reason },
+      {
+        onSuccess: () => {
+          toast.success("Obligation rejected");
+          navigate("/obligations");
+        },
+        onError: () => toast.error("Failed to reject"),
+      },
+    );
   };
 
-  if (loading) return <PageLoader />;
+  if (isLoading) return <PageLoader />;
   if (!obligation)
     return (
       <p className="text-center text-bone-700 py-16">Obligation not found.</p>
@@ -97,7 +96,7 @@ export default function ObligationDetail() {
             <div>
               <p className="text-xs text-bone-500 mb-0.5">Payer</p>
               <p className="text-sm font-medium text-bone-100 truncate">
-                {obligation.payerName ?? obligation.payer}
+                {obligation.payer.split("::")[0]}
               </p>
               <p className="text-xs text-bone-700 font-mono truncate">
                 {obligation.payer}
@@ -106,7 +105,7 @@ export default function ObligationDetail() {
             <div>
               <p className="text-xs text-bone-500 mb-0.5">Receiver</p>
               <p className="text-sm font-medium text-bone-100 truncate">
-                {obligation.receiverName ?? obligation.receiver}
+                {obligation.receiver.split("::")[0]}
               </p>
               <p className="text-xs text-bone-700 font-mono truncate">
                 {obligation.receiver}
@@ -148,7 +147,6 @@ export default function ObligationDetail() {
             </div>
           )}
 
-          {/* Timeline */}
           <div>
             <p className="text-xs text-bone-500 mb-2">Timeline</p>
             <div className="flex items-center gap-2">
@@ -173,8 +171,17 @@ export default function ObligationDetail() {
           {obligation.status === "PENDING" &&
             obligation.payer !== user?.partyId && (
               <div className="flex gap-3 pt-2">
-                <Button onClick={handleAccept}>Accept</Button>
-                <Button variant="danger" onClick={handleReject}>
+                <Button
+                  onClick={handleAccept}
+                  loading={acceptMutation.isPending}
+                >
+                  Accept
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleReject}
+                  loading={rejectMutation.isPending}
+                >
                   Reject
                 </Button>
               </div>

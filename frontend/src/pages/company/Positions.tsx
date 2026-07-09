@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { positionsApi } from "../../services/api";
+import { usePositions, useAcknowledgePosition } from "../../hooks/queries";
 import { NetPosition } from "../../types";
 import {
   Card,
@@ -18,32 +17,16 @@ import {
 import { fmt } from "../../utils";
 
 export default function Positions() {
-  const [positions, setPositions] = useState<NetPosition[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [ackingId, setAckingId] = useState<string | null>(null);
+  const { data, isLoading } = usePositions();
+  const ackMutation = useAcknowledgePosition();
 
-  useEffect(() => {
-    positionsApi
-      .list()
-      .then((res) => setPositions(res.data?.positions ?? res.data ?? []))
-      .finally(() => setLoading(false));
-  }, []);
+  const positions: NetPosition[] = data?.positions ?? data ?? [];
 
-  const handleAck = async (cid: string) => {
-    setAckingId(cid);
-    try {
-      await positionsApi.acknowledge(cid);
-      setPositions((p) =>
-        p.map((x) =>
-          x.contractId === cid ? { ...x, status: "ACKNOWLEDGED" } : x,
-        ),
-      );
-      toast.success("Position acknowledged");
-    } catch {
-      toast.error("Failed to acknowledge");
-    } finally {
-      setAckingId(null);
-    }
+  const handleAck = (cid: string) => {
+    ackMutation.mutate(cid, {
+      onSuccess: () => toast.success("Position acknowledged"),
+      onError: () => toast.error("Failed to acknowledge"),
+    });
   };
 
   const totalReceive = positions
@@ -53,7 +36,7 @@ export default function Positions() {
     .filter((p) => p.netAmountSettlement < 0 && p.status === "PENDING")
     .reduce((s, p) => s + Math.abs(p.netAmountSettlement), 0);
 
-  if (loading) return <PageLoader />;
+  if (isLoading) return <PageLoader />;
 
   return (
     <div className="space-y-6">
@@ -115,7 +98,10 @@ export default function Positions() {
                         <Button
                           size="sm"
                           onClick={() => handleAck(p.contractId)}
-                          loading={ackingId === p.contractId}
+                          loading={
+                            ackMutation.isPending &&
+                            ackMutation.variables === p.contractId
+                          }
                         >
                           Acknowledge
                         </Button>

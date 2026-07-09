@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { cyclesApi, positionsApi } from "../../services/api";
+import { useCycles, usePositions } from "../../hooks/queries";
 import { NettingCycle, NetPosition } from "../../types";
 import {
   Card,
@@ -18,31 +17,21 @@ import {
 import { fmt } from "../../utils";
 
 export default function Cycles() {
-  const [cycles, setCycles] = useState<NettingCycle[]>([]);
-  const [positions, setPositions] = useState<Record<string, NetPosition>>({});
-  const [loading, setLoading] = useState(true);
+  const { data: cyclesData, isLoading: loadingCycles } = useCycles();
+  const { data: positionsData, isLoading: loadingPositions } = usePositions();
 
-  useEffect(() => {
-    Promise.allSettled([cyclesApi.list(), positionsApi.list()]).then(
-      ([c, p]) => {
-        if (c.status === "fulfilled") setCycles(c.value.data ?? []);
-        if (p.status === "fulfilled") {
-          const map: Record<string, NetPosition> = {};
-          (p.value.data?.positions ?? p.value.data ?? []).forEach(
-            (pos: NetPosition) => {
-              map[pos.cycleId] = pos;
-            },
-          );
-          setPositions(map);
-        }
-        setLoading(false);
-      },
-    );
-  }, []);
+  const cycles: NettingCycle[] = cyclesData ?? [];
+  const allPositions: NetPosition[] =
+    positionsData?.positions ?? positionsData ?? [];
+
+  const positions: Record<string, NetPosition> = {};
+  allPositions.forEach((pos) => {
+    positions[pos.cycleId] = pos;
+  });
 
   const openCycle = cycles.find((c) => c.status === "OPEN");
 
-  if (loading) return <PageLoader />;
+  if (loadingCycles || loadingPositions) return <PageLoader />;
 
   return (
     <div className="space-y-6">

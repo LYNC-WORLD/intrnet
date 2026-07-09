@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState } from "react";
+import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
-import { obligationsApi, participantsApi, fxApi } from "../../services/api";
-import { Participant, FxRate, Agreement } from "../../types";
+import {
+  useParticipants,
+  useFxRates,
+  useAgreement,
+  useCreateObligation,
+} from "../../hooks/queries";
+import { Participant } from "../../types";
 import {
   Card,
   CardBody,
@@ -18,15 +23,17 @@ import { useAuth } from "@/context/AuthContext";
 const CURRENCIES = ["EUR", "GBP", "JPY", "CHF", "AUD", "USD"];
 
 export default function CreateObligation() {
-  const navigate = useNavigate();
   const { user } = useAuth();
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [rates, setRates] = useState<FxRate[]>([]);
-  const [agreement, setAgreement] = useState<Agreement | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
 
+  const { data: participantsData, isLoading: loadingParticipants } =
+    useParticipants();
+  const { data: ratesData, isLoading: loadingRates } = useFxRates();
+  const { data: agreementData, isLoading: loadingAgreement } = useAgreement(
+    user?.agreementId ?? undefined,
+  );
+  const createMutation = useCreateObligation();
+
+  const [success, setSuccess] = useState<string | null>(null);
   const [form, setForm] = useState({
     receiver: "",
     amount: "",
@@ -35,24 +42,11 @@ export default function CreateObligation() {
     description: "",
   });
 
-  useEffect(() => {
-    Promise.allSettled([
-      participantsApi.list(),
-      fxApi.list(),
-      participantsApi.agreement(user?.agreementId ?? undefined),
-    ])
-      .then(([p, r, a]) => {
-        if (p.status === "fulfilled") {
-          const all = p.value.data ?? [];
-          setParticipants(
-            all.filter((p: Participant) => p.partyId !== user?.partyId),
-          );
-        }
-        if (r.status === "fulfilled") setRates(r.value.data ?? []);
-        if (a.status === "fulfilled") setAgreement(a.value.data ?? null);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const allParticipants: Participant[] = participantsData ?? [];
+  const participants = allParticipants.filter(
+    (p) => p.partyId !== user?.partyId,
+  );
+  const rates = ratesData ?? [];
 
   const estimatedUsd =
     form.amount && !isNaN(Number(form.amount))
@@ -66,31 +60,32 @@ export default function CreateObligation() {
     form.invoiceRef &&
     form.description;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!valid) return;
-    setSubmitting(true);
-    try {
-      const res = await obligationsApi.create({
+    createMutation.mutate(
+      {
         receiver: form.receiver,
         amount: Number(form.amount),
         currency: form.currency,
         description: form.description,
         invoiceRef: form.invoiceRef,
-        agreementId: agreement?.agreementId,
-      });
-      const receiverName =
-        participants.find((p) => p.partyId === form.receiver)?.companyName ??
-        "receiver";
-      setSuccess(res.data?.contractId ?? null);
-      toast.success(`Obligation sent to ${receiverName} for acceptance`);
-    } catch {
-      toast.error("Failed to create obligation");
-    } finally {
-      setSubmitting(false);
-    }
+        agreementId: agreementData?.agreementId,
+      },
+      {
+        onSuccess: (res) => {
+          const receiverName =
+            participants.find((p) => p.partyId === form.receiver)
+              ?.companyName ?? "receiver";
+          setSuccess(res.data?.contractId ?? null);
+          toast.success(`Obligation sent to ${receiverName} for acceptance`);
+        },
+        onError: () => toast.error("Failed to create obligation"),
+      },
+    );
   };
 
+  const loading = loadingParticipants || loadingRates || loadingAgreement;
   if (loading) return <PageLoader />;
 
   if (success) {
@@ -197,7 +192,7 @@ export default function CreateObligation() {
               type="submit"
               className="w-full"
               size="lg"
-              loading={submitting}
+              loading={createMutation.isPending}
               disabled={!valid}
             >
               Create Obligation

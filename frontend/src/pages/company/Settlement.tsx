@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import toast from "react-hot-toast";
-import { settlementApi } from "../../services/api";
+import {
+  useSettlementInstructions,
+  useSettlementAccounts,
+  useExecuteSettlement,
+  useConfirmSettlement,
+} from "../../hooks/queries";
 import { SettlementInstruction, CashAccount } from "../../types";
 import {
   Card,
@@ -28,38 +33,19 @@ const TABS = [
 ];
 
 export default function Settlement() {
-  const [instructions, setInstructions] = useState<SettlementInstruction[]>([]);
+  const { user } = useAuth();
   const [tab, setTab] = useState("all");
-  const [loading, setLoading] = useState(true);
   const [modalInstruction, setModalInstruction] =
     useState<SettlementInstruction | null>(null);
-  const [balance, setBalance] = useState<CashAccount | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState("");
-  const { user } = useAuth();
 
-  const load = () => {
-    setLoading(true);
-    Promise.allSettled([
-      settlementApi.instructions(),
-      settlementApi.accounts(),
-    ]).then(([i, a]) => {
-      if (i.status === "fulfilled")
-        setInstructions(i.value.data?.instructions ?? i.value.data ?? []);
-      if (a.status === "fulfilled") {
-        const accounts: CashAccount[] = a.value.data ?? [];
-        setBalance(
-          accounts.find((x) => x.currency === "USD") ?? accounts[0] ?? null,
-        );
-      }
-      setLoading(false);
-    });
-  };
+  const { data: instructionsData, isLoading } = useSettlementInstructions();
+  const { data: accountsData } = useSettlementAccounts();
+  const executeMutation = useExecuteSettlement();
+  const confirmMutation = useConfirmSettlement();
 
-  useEffect(() => {
-    load();
-  }, []);
+  const instructions: SettlementInstruction[] =
+    instructionsData?.instructions ?? instructionsData ?? [];
+  const accounts: CashAccount[] = accountsData ?? [];
 
   const filtered = instructions.filter((i) => {
     if (tab === "pay") return i.payer === user?.partyId;
@@ -70,71 +56,43 @@ export default function Settlement() {
   const totalToPay = instructions
     .filter((i) => i.payer === user?.partyId && i.status === "PENDING")
     .reduce((s, i) => s + i.amount, 0);
-
   const totalToReceive = instructions
     .filter((i) => i.receiver === user?.partyId && i.status === "CONFIRMED")
     .reduce((s, i) => s + i.amount, 0);
 
-  const openPayModal = async (instruction: SettlementInstruction) => {
-    setModalInstruction(instruction);
-    setError("");
-    setModalLoading(true);
-    try {
-      const res = await settlementApi.accounts();
-      const accounts: CashAccount[] = res.data ?? [];
-      setBalance(
-        accounts.find((a) => a.currency === instruction.currency) ??
-          accounts[0] ??
-          null,
-      );
-    } finally {
-      setModalLoading(false);
-    }
-  };
+  // const openPayModal = (instruction: SettlementInstruction) => setModalInstruction(instruction);
 
-  const handleConfirmPay = async () => {
+  const handleConfirmPay = () => {
     if (!modalInstruction) return;
-    setConfirming(true);
-    setError("");
-    try {
-      await settlementApi.execute(modalInstruction.contractId);
-      setInstructions((prev) =>
-        prev.map((i) =>
-          i.contractId === modalInstruction.contractId
-            ? { ...i, status: "EXECUTED" }
-            : i,
-        ),
-      );
-      toast.success("Payment sent");
-      setModalInstruction(null);
-    } catch {
-      setError("Payment failed. Please check your balance and try again.");
-    } finally {
-      setConfirming(false);
-    }
+    executeMutation.mutate(modalInstruction.contractId, {
+      onSuccess: () => {
+        toast.success("Payment sent");
+        setModalInstruction(null);
+      },
+      onError: () =>
+        toast.error("Payment failed. Please check your balance and try again."),
+    });
   };
 
-  const handleConfirmReceipt = async (cid: string) => {
-    try {
-      await settlementApi.confirm(cid);
-      setInstructions((prev) =>
-        prev.map((i) =>
-          i.contractId === cid ? { ...i, status: "CONFIRMED" } : i,
-        ),
-      );
-      toast.success("Receipt confirmed");
-    } catch {
-      toast.error("Failed to confirm");
-    }
+  const handleConfirmReceipt = (cid: string) => {
+    confirmMutation.mutate(cid, {
+      onSuccess: () => toast.success("Receipt confirmed"),
+      onError: () => toast.error("Failed to confirm"),
+    });
   };
 
+  const balance = modalInstruction
+    ? (accounts.find((a) => a.currency === modalInstruction.currency) ??
+      accounts[0] ??
+      null)
+    : null;
   const balanceAfter =
     balance && modalInstruction
       ? balance.balance - modalInstruction.amount
       : null;
   const isLow = balanceAfter !== null && balanceAfter < LOW_BALANCE_THRESHOLD;
 
-  if (loading) return <PageLoader />;
+  if (isLoading) return <PageLoader />;
 
   return (
     <div className="space-y-6">
@@ -175,56 +133,59 @@ export default function Settlement() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((i) => (
-                  <Tr key={i.contractId}>
-                    <Td>{i.cycleId}</Td>
-                    <Td>
-                      {user?.partyId === i.payer
-                        ? i.receiver.split("::")[0]
-                        : i.payer.split("::")[0]}
-                    </Td>
-                    <Td>
-                      <span
-                        className={
-                          user?.partyId === i.payer
-                            ? "text-red-400"
-                            : "text-emerald-400"
-                        }
-                      >
-                        {user?.partyId === i.payer ? "-" : "+"}
-                        {fmt.currency(i.amount, i.currency)}
-                      </span>
-                    </Td>{" "}
-                    <Td>
-                      <Badge status={i.status} />
-                    </Td>
-                    <Td>{fmt.dateShort(i.createdAt)}</Td>
-                    <Td>
-                      {/* {i.status === "PENDING" && (
-                        <Button size="sm" onClick={() => openPayModal(i)}>
-                          Pay
-                        </Button>
-                      )} */}
-                      {i.status === "EXECUTED" &&
-                        i.receiver === user?.partyId && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => handleConfirmReceipt(i.contractId)}
-                          >
-                            Confirm Receipt
-                          </Button>
-                        )}
-                    </Td>
-                  </Tr>
-                ))}
+                {filtered.map((i) => {
+                  const isConfirming =
+                    confirmMutation.isPending &&
+                    confirmMutation.variables === i.contractId;
+                  return (
+                    <Tr key={i.contractId}>
+                      <Td>{i.cycleId}</Td>
+                      <Td>
+                        {user?.partyId === i.payer
+                          ? i.receiver.split("::")[0]
+                          : i.payer.split("::")[0]}
+                      </Td>
+                      <Td>
+                        <span
+                          className={
+                            user?.partyId === i.payer
+                              ? "text-red-400"
+                              : "text-emerald-400"
+                          }
+                        >
+                          {user?.partyId === i.payer ? "-" : "+"}
+                          {fmt.currency(i.amount, i.currency)}
+                        </span>
+                      </Td>
+                      <Td>
+                        <Badge status={i.status} />
+                      </Td>
+                      <Td>{fmt.dateShort(i.createdAt)}</Td>
+                      <Td>
+                        {/* {i.status === "PENDING" && (
+                          <Button size="sm" onClick={() => openPayModal(i)}>Pay</Button>
+                        )} */}
+                        {i.status === "EXECUTED" &&
+                          i.receiver === user?.partyId && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => handleConfirmReceipt(i.contractId)}
+                              loading={isConfirming}
+                            >
+                              Confirm Receipt
+                            </Button>
+                          )}
+                      </Td>
+                    </Tr>
+                  );
+                })}
               </tbody>
             </Table>
           )}
         </CardBody>
       </Card>
 
-      {/* Sticky totals */}
       <div className="sticky bottom-4 flex flex-wrap gap-4 bg-ink-800 border border-ink-500 rounded-xl shadow-sm px-6 py-3">
         <span className="text-sm text-bone-300">
           Total due:{" "}
@@ -238,7 +199,6 @@ export default function Settlement() {
         </span>
       </div>
 
-      {/* Execute payment modal */}
       <Modal
         open={!!modalInstruction}
         onClose={() => setModalInstruction(null)}
@@ -251,60 +211,60 @@ export default function Settlement() {
             >
               Cancel
             </Button>
-            <Button onClick={handleConfirmPay} loading={confirming}>
+            <Button
+              onClick={handleConfirmPay}
+              loading={executeMutation.isPending}
+            >
               Confirm & Pay
             </Button>
           </>
         }
       >
-        {modalLoading ? (
-          <PageLoader />
-        ) : (
-          modalInstruction && (
-            <div className="space-y-4">
-              <p className="text-sm text-bone-300">
-                You are paying{" "}
-                <strong>
-                  {fmt.currency(
-                    modalInstruction.amount,
-                    modalInstruction.currency,
-                  )}
-                </strong>{" "}
-                to{" "}
-                <strong>
-                  {modalInstruction.receiverName ?? modalInstruction.receiver}
-                </strong>
-              </p>
-              <p className="text-xs text-bone-500">
-                Cycle: {modalInstruction.cycleId}
-              </p>
+        {modalInstruction && (
+          <div className="space-y-4">
+            <p className="text-sm text-bone-300">
+              You are paying{" "}
+              <strong>
+                {fmt.currency(
+                  modalInstruction.amount,
+                  modalInstruction.currency,
+                )}
+              </strong>{" "}
+              to <strong>{modalInstruction.receiver.split("::")[0]}</strong>
+            </p>
+            <p className="text-xs text-bone-500">
+              Cycle: {modalInstruction.cycleId}
+            </p>
 
-              <div className="bg-ink-700 rounded-lg p-3 space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-bone-500">Current balance</span>
-                  <span className="font-medium text-bone-100">
-                    {balance
-                      ? fmt.currency(balance.balance, balance.currency)
-                      : "—"}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-bone-500">Balance after</span>
-                  <span className="font-medium text-bone-100">
-                    {balanceAfter !== null ? fmt.currency(balanceAfter) : "—"}
-                  </span>
-                </div>
+            <div className="bg-ink-700 rounded-lg p-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-bone-500">Current balance</span>
+                <span className="font-medium text-bone-100">
+                  {balance
+                    ? fmt.currency(balance.balance, balance.currency)
+                    : "—"}
+                </span>
               </div>
-
-              {isLow && (
-                <Alert type="warning">
-                  ⚠️ Your balance after this payment will be below{" "}
-                  {fmt.currency(LOW_BALANCE_THRESHOLD)}.
-                </Alert>
-              )}
-              {error && <Alert type="error">{error}</Alert>}
+              <div className="flex justify-between text-sm">
+                <span className="text-bone-500">Balance after</span>
+                <span className="font-medium text-bone-100">
+                  {balanceAfter !== null ? fmt.currency(balanceAfter) : "—"}
+                </span>
+              </div>
             </div>
-          )
+
+            {isLow && (
+              <Alert type="warning">
+                ⚠️ Your balance after this payment will be below{" "}
+                {fmt.currency(LOW_BALANCE_THRESHOLD)}.
+              </Alert>
+            )}
+            {executeMutation.isError && (
+              <Alert type="error">
+                Payment failed. Please check your balance and try again.
+              </Alert>
+            )}
+          </div>
         )}
       </Modal>
     </div>

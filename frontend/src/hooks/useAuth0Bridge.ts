@@ -15,11 +15,18 @@ export function useAuth0BridgeEffect() {
     isLoading: auth0Loading,
     getAccessTokenSilently,
   } = useAuth0();
-  const { setSession, setExchangeStatus } = useAuth();
+  const {
+    setSession,
+    isAuthenticated: hasBackendSession,
+    setExchangeStatus,
+  } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (auth0Loading || !auth0Authenticated) return;
+
+    if (hasBackendSession) return;
+
     if (exchangeInFlight || exchangeDone || exchangeFailed) return;
 
     exchangeInFlight = true;
@@ -47,7 +54,6 @@ export function useAuth0BridgeEffect() {
         }
 
         setSession(auth0Token, user);
-
         navigate("/dashboard", { replace: true });
       } catch (err) {
         console.error("EXCHANGE ERROR:", err);
@@ -64,6 +70,7 @@ export function useAuth0BridgeEffect() {
   }, [
     auth0Authenticated,
     auth0Loading,
+    hasBackendSession,
     getAccessTokenSilently,
     setSession,
     setExchangeStatus,
