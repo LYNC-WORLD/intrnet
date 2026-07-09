@@ -207,7 +207,10 @@ export function Spinner({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
 export function PageLoader() {
   return (
     <div className="flex items-center justify-center h-64">
-      <Spinner size="lg" />
+      <div className="relative h-10 w-10">
+        <div className="absolute inset-0 animate-spin rounded-full border-4 border-zinc-800 border-t-lime-400" />
+        <div className="absolute inset-2 animate-spin rounded-full border-4 border-transparent border-t-lime-400 [animation-direction:reverse] [animation-duration:1.5s]" />
+      </div>
     </div>
   );
 }
@@ -274,10 +277,10 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-bone-700">
-      <div className="mb-3 opacity-70">
+      {/* <div className="mb-3 opacity-70">
         <CantonMark size={36} />
-      </div>
-      {icon && <div className="mb-2 text-3xl">{icon}</div>}
+      </div> */}
+      {/* {icon && <div className="mb-2 text-3xl">{icon}</div>} */}
       <p className="text-sm text-bone-500">{message}</p>
     </div>
   );

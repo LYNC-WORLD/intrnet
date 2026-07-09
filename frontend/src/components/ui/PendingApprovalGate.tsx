@@ -10,12 +10,12 @@ import { CantonMark, StackedPanes } from "./CantonMark";
 export function PendingApprovalGate({ companyName }: { companyName?: string }) {
   const { logout: auth0Logout } = useAuth0();
 
-  const handleLogout = () => {
-    localStorage.removeItem("nc_token");
-    localStorage.removeItem("nc_user");
-    auth0Logout({
+  const handleLogout = async () => {
+    await auth0Logout({
       logoutParams: { returnTo: window.location.origin + "/login" },
     });
+    localStorage.removeItem("nc_token");
+    localStorage.removeItem("nc_user");
   };
 
   return (

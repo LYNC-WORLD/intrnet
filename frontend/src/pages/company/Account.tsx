@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
-import { settlementApi, fxApi, authApi } from "../../services/api";
-import { CashAccount, SettlementInstruction, FxRate, User } from "../../types";
+import {
+  useMe,
+  useSettlementAccounts,
+  useSettlementInstructions,
+  useFxRates,
+} from "../../hooks/queries";
+import { CashAccount, SettlementInstruction, FxRate } from "../../types";
 import {
   Card,
   CardHeader,
@@ -15,40 +19,30 @@ import {
 import { fmt } from "../../utils";
 
 export default function Account() {
-  const [account, setAccount] = useState<CashAccount | null>(null);
-  const [history, setHistory] = useState<SettlementInstruction[]>([]);
-  const [rates, setRates] = useState<FxRate[]>([]);
-  const [profile, setProfile] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: profile, isLoading: loadingMe } = useMe();
+  const { data: accountsData, isLoading: loadingAccounts } =
+    useSettlementAccounts();
+  const { data: historyData, isLoading: loadingHistory } =
+    useSettlementInstructions({ status: "CONFIRMED" });
+  const { data: ratesData, isLoading: loadingRates } = useFxRates();
 
-  useEffect(() => {
-    Promise.allSettled([
-      settlementApi.accounts(),
-      settlementApi.instructions({ status: "CONFIRMED" }),
-      fxApi.list(),
-      authApi.me(),
-    ]).then(([acc, hist, rate, me]) => {
-      if (acc.status === "fulfilled") {
-        const accounts: CashAccount[] = acc.value.data ?? [];
-        setAccount(
-          accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null,
-        );
-      }
-      if (hist.status === "fulfilled")
-        setHistory(hist.value.data?.instructions ?? hist.value.data ?? []);
-      if (rate.status === "fulfilled") setRates(rate.value.data ?? []);
-      if (me.status === "fulfilled") setProfile(me.value.data);
-      setLoading(false);
-    });
-  }, []);
+  const accounts: CashAccount[] = accountsData ?? [];
+  const account =
+    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
+
+  const history: SettlementInstruction[] =
+    historyData?.instructions ?? historyData ?? [];
+  const rates: FxRate[] = ratesData ?? [];
+
+  const loading =
+    loadingMe || loadingAccounts || loadingHistory || loadingRates;
 
   if (loading) return <PageLoader />;
 
-  let runningBalance = account?.balance ?? 0;
   const txRows = history.map((h) => {
-    const isCredit =
-      h.receiverName === profile?.companyName ||
-      h.receiver === profile?.partyId;
+    // isCredit means money came TO us — compare against our own partyId,
+    // since the API doesn't return receiverName/payerName fields.
+    const isCredit = h.receiver === profile?.partyId;
     return { ...h, isCredit };
   });
 
@@ -131,7 +125,6 @@ export default function Account() {
                         {fmt.currency(t.amount, t.currency)}
                       </span>
                     </Td>
-
                     <Td>
                       {t.isCredit
                         ? t.payer.split("::")[0]

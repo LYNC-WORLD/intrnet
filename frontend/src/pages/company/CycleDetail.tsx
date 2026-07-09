@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
-  cyclesApi,
-  positionsApi,
-  obligationsApi,
-  settlementApi,
-} from "../../services/api";
+  useCycles,
+  usePositions,
+  useObligations,
+  useSettlementInstructions,
+  useAcknowledgePosition,
+} from "../../hooks/queries";
 import {
   NettingCycle,
   NetPosition,
@@ -30,58 +30,46 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function CycleDetail() {
   const { cycleId } = useParams<{ cycleId: string }>();
-  const [cycle, setCycle] = useState<NettingCycle | null>(null);
-  const [position, setPosition] = useState<NetPosition | null>(null);
-  const [obligations, setObligations] = useState<Obligation[]>([]);
-  const [instructions, setInstructions] = useState<SettlementInstruction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [acking, setAcking] = useState(false);
   const { user } = useAuth();
 
-  useEffect(() => {
-    if (!cycleId) return;
-    Promise.allSettled([
-      cyclesApi.list(),
-      positionsApi.list({ cycleId }),
-      obligationsApi.list({ status: "NETTED" }),
-      settlementApi.instructions(),
-    ]).then(([c, p, o, s]) => {
-      if (c.status === "fulfilled") {
-        const list: NettingCycle[] = c.value.data ?? [];
-        setCycle(list.find((x) => x.cycleId === cycleId) ?? null);
-      }
-      if (p.status === "fulfilled") {
-        const list: NetPosition[] =
-          p.value.data?.positions ?? p.value.data ?? [];
-        setPosition(list.find((x) => x.cycleId === cycleId) ?? list[0] ?? null);
-      }
-      if (o.status === "fulfilled") {
-        const list: Obligation[] =
-          o.value.data?.obligations ?? o.value.data ?? [];
-        setObligations(list);
-      }
-      if (s.status === "fulfilled") {
-        const list: SettlementInstruction[] =
-          s.value.data?.instructions ?? s.value.data ?? [];
-        setInstructions(list.filter((x) => x.cycleId === cycleId));
-      }
-      setLoading(false);
-    });
-  }, [cycleId]);
+  const { data: cyclesData, isLoading: loadingCycles } = useCycles();
+  const { data: positionsData, isLoading: loadingPositions } = usePositions(
+    cycleId ? { cycleId } : undefined,
+  );
+  const { data: obligationsData, isLoading: loadingObligations } =
+    useObligations({ status: "NETTED" });
+  const { data: instructionsData, isLoading: loadingInstructions } =
+    useSettlementInstructions();
+  const ackMutation = useAcknowledgePosition();
 
-  const handleAck = async () => {
+  const cycles: NettingCycle[] = cyclesData ?? [];
+  const cycle = cycles.find((x) => x.cycleId === cycleId) ?? null;
+
+  const allPositions: NetPosition[] =
+    positionsData?.positions ?? positionsData ?? [];
+  const position =
+    allPositions.find((x) => x.cycleId === cycleId) ?? allPositions[0] ?? null;
+
+  const obligations: Obligation[] =
+    obligationsData?.obligations ?? obligationsData ?? [];
+
+  const allInstructions: SettlementInstruction[] =
+    instructionsData?.instructions ?? instructionsData ?? [];
+  const instructions = allInstructions.filter((x) => x.cycleId === cycleId);
+
+  const handleAck = () => {
     if (!position) return;
-    setAcking(true);
-    try {
-      await positionsApi.acknowledge(position.contractId);
-      setPosition((p) => (p ? { ...p, status: "ACKNOWLEDGED" } : p));
-      toast.success("Position acknowledged");
-    } catch {
-      toast.error("Failed to acknowledge");
-    } finally {
-      setAcking(false);
-    }
+    ackMutation.mutate(position.contractId, {
+      onSuccess: () => toast.success("Position acknowledged"),
+      onError: () => toast.error("Failed to acknowledge"),
+    });
   };
+
+  const loading =
+    loadingCycles ||
+    loadingPositions ||
+    loadingObligations ||
+    loadingInstructions;
 
   if (loading) return <PageLoader />;
   if (!cycle)
@@ -113,7 +101,6 @@ export default function CycleDetail() {
         </CardHeader>
       </Card>
 
-      {/* Net position */}
       {position && (
         <Card>
           <CardBody className="flex items-center justify-between flex-wrap gap-4">
@@ -127,7 +114,7 @@ export default function CycleDetail() {
               </p>
             </div>
             {position.status === "PENDING" ? (
-              <Button onClick={handleAck} loading={acking}>
+              <Button onClick={handleAck} loading={ackMutation.isPending}>
                 Acknowledge
               </Button>
             ) : (
@@ -137,7 +124,6 @@ export default function CycleDetail() {
         </Card>
       )}
 
-      {/* My contributions */}
       <Card>
         <CardHeader>
           <h2 className="font-semibold text-bone-100">My Contributions</h2>
@@ -176,7 +162,7 @@ export default function CycleDetail() {
                       {user?.partyId === o.payer
                         ? o.receiver.split("::")[0]
                         : o.payer.split("::")[0]}
-                    </Td>{" "}
+                    </Td>
                     <Td>{fmt.currency(o.amount, o.currency)}</Td>
                   </Tr>
                 ))}
@@ -186,7 +172,6 @@ export default function CycleDetail() {
         </CardBody>
       </Card>
 
-      {/* Settlement instructions */}
       {instructions.length > 0 && (
         <Card>
           <CardHeader>
@@ -222,7 +207,7 @@ export default function CycleDetail() {
                       {user?.partyId === i.payer
                         ? i.receiver.split("::")[0]
                         : i.payer.split("::")[0]}
-                    </Td>{" "}
+                    </Td>
                     <Td>{fmt.currency(i.amount, i.currency)}</Td>
                     <Td>
                       <Badge status={i.status} />

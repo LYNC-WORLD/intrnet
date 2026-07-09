@@ -3,7 +3,13 @@
  * Canton "C" wordmark, rendered in line-art rather than a solid fill.
  * Used sparingly: brand lockup, loading state, and empty-state ornament.
  */
-export function CantonMark({ size = 32, spin = false }: { size?: number; spin?: boolean }) {
+export function CantonMark({
+  size = 32,
+  spin = false,
+}: {
+  size?: number;
+  spin?: boolean;
+}) {
   const strokes = 16;
   const radius = size / 2 - 1.5;
   const cx = size / 2;
@@ -15,7 +21,7 @@ export function CantonMark({ size = 32, spin = false }: { size?: number; spin?: 
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      className={spin ? 'animate-spin-slow' : ''}
+      className={spin ? "animate-spin-slow" : ""}
     >
       {Array.from({ length: strokes }).map((_, i) => {
         const angle = (i / strokes) * 300 - 240; // ~300° arc, leaving a gap like the "C"
@@ -28,7 +34,10 @@ export function CantonMark({ size = 32, spin = false }: { size?: number; spin?: 
         return (
           <line
             key={i}
-            x1={x1} y1={y1} x2={x2} y2={y2}
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
             stroke="#E4F95E"
             strokeWidth={strokeW}
             strokeLinecap="round"
@@ -44,10 +53,15 @@ export function CantonMark({ size = 32, spin = false }: { size?: number; spin?: 
  * overlapping-plane illustration. Pure SVG line art, no raster assets.
  * Intended as a background flourish behind auth panels / empty states.
  */
-export function StackedPanes({ className = '' }: { className?: string }) {
+export function StackedPanes({ className = "" }: { className?: string }) {
   const planes = 8;
   return (
-    <svg viewBox="0 0 480 220" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      viewBox="0 0 480 220"
+      className={className}
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
       {Array.from({ length: planes }).map((_, i) => {
         const t = i / (planes - 1);
         const x = 30 + i * 38;
@@ -62,7 +76,7 @@ export function StackedPanes({ className = '' }: { className?: string }) {
             height="148"
             rx="8"
             transform={`rotate(-22 ${x + 59} ${y})`}
-            stroke={isLast ? '#E4F95E' : '#9A9A9E'}
+            stroke={isLast ? "#E4F95E" : "#9A9A9E"}
             strokeOpacity={isLast ? 0.9 : 0.16 + t * 0.3}
             strokeWidth={isLast ? 1.6 : 1}
           />

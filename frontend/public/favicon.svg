@@ -1,4 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#0E0E0F"/>
-  <path d="M22 9a8 8 0 1 0 0 14" stroke="#E4F95E" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- <rect width="24" height="24" rx="5" fill="#0E0E0F"/> -->
+  <line x1="9.11" y1="17.00" x2="6.75" y2="21.09" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="7.66" y1="15.81" x2="4.11" y2="18.92" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="6.66" y1="14.21" x2="2.30" y2="16.02" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="6.24" y1="12.38" x2="1.52" y2="12.69" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="6.42" y1="10.51" x2="1.86" y2="9.28" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="7.20" y1="8.79" x2="3.27" y2="6.17" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="8.48" y1="7.42" x2="5.61" y2="3.67" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="10.14" y1="6.53" x2="8.62" y2="2.06" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="12.00" y1="6.22" x2="12.00" y2="1.50" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="13.86" y1="6.53" x2="15.38" y2="2.06" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="15.52" y1="7.42" x2="18.39" y2="3.67" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="16.80" y1="8.79" x2="20.73" y2="6.17" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="17.58" y1="10.51" x2="22.14" y2="9.28" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="17.76" y1="12.38" x2="22.48" y2="12.69" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="17.34" y1="14.21" x2="21.70" y2="16.02" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
+  <line x1="16.34" y1="15.81" x2="19.89" y2="18.92" stroke="#E4F95E" stroke-width="1.71" stroke-linecap="round"/>
 </svg>
