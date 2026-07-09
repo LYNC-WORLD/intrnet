@@ -40,6 +40,14 @@ async function loadSettlementPositionCids(contractIdOrCycleId: string) {
   return { data: positions.map((p) => p.contractId), cycle };
 }
 
+async function loadForceSettlementPositionCids(contractIdOrCycleId: string) {
+  const cycle = await resolveCycle(contractIdOrCycleId);
+  if (!cycle) return { error: "Cycle not found", status: 404 as const };
+
+  const positions = await getActivePositionsForCycle(cycle.cycleId);
+  return { data: positions.map((p) => p.contractId), cycle };
+}
+
 async function loadSettlementInstructionCids(contractIdOrCycleId: string) {
   const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
@@ -205,7 +213,7 @@ export async function settleCycle(contractIdOrCycleId: string) {
 }
 
 export async function forceSettleCycle(contractIdOrCycleId: string) {
-  const positionResult = await loadSettlementPositionCids(contractIdOrCycleId);
+  const positionResult = await loadForceSettlementPositionCids(contractIdOrCycleId);
   if (isServiceError(positionResult)) return positionResult;
 
   try {
