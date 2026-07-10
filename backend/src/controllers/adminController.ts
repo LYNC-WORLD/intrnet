@@ -1,9 +1,17 @@
 import { Request, Response } from "express";
+import { prisma } from "../db";
 import * as adminService from "../services/adminService";
 import { pqsHealthCheck } from "../repositories/pqsLedgerReadRepository";
 import { asyncHandler } from "../utils/asyncHandler";
 import { reconcileDeposits } from "../settlementToken/depositIndexer";
 import { discoverInstrumentAdmin, listRegistryInstruments } from "../settlementToken/registryClient";
+import {
+  creditDeposit,
+  creditManualBalance,
+  getOrCreatePartyBalance,
+  getPartyBalance,
+} from "../services/balanceService";
+import { getSettlementCurrency } from "../config/settlementToken";
 
 export const listCompanies = asyncHandler(async (req: Request, res: Response) => {
   const { agreementId } = req.query as Record<string, string | undefined>;
@@ -57,6 +65,86 @@ export const rejectOnboarding = asyncHandler(async (req: Request, res: Response)
 export const syncDeposits = asyncHandler(async (req: Request, res: Response) => {
   const result = await reconcileDeposits(req.user.userId);
   return res.json({ success: true, data: result });
+});
+
+export const creditPartyBalance = asyncHandler(async (req: Request, res: Response) => {
+  const { partyId, amount, referenceId, holdingContractId, note } = req.body as {
+    partyId?: string;
+    amount?: number | string;
+    referenceId?: string;
+    holdingContractId?: string;
+    note?: string;
+  };
+
+  const resolvedPartyId = partyId?.trim();
+  if (!resolvedPartyId) {
+    return res.status(400).json({ error: "partyId is required" });
+  }
+
+  const parsedAmount = Number(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    return res.status(400).json({ error: "amount must be a positive number" });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { partyId: resolvedPartyId, status: "ACTIVE" },
+    select: { partyId: true, email: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: "No ACTIVE user found for partyId" });
+  }
+
+  const currency = getSettlementCurrency();
+  const creditNote =
+    note?.trim() ||
+    (holdingContractId
+      ? `Manual ${currency} credit for custody holding ${holdingContractId}`
+      : `Manual ${currency} balance credit`);
+
+  if (holdingContractId?.trim()) {
+    const credited = await creditDeposit({
+      partyId: resolvedPartyId,
+      amount: parsedAmount,
+      holdingContractId: holdingContractId.trim(),
+      createdBy: req.user.userId,
+      note: creditNote,
+    });
+    const balance = credited ?? (await getPartyBalance(resolvedPartyId)) ?? (await getOrCreatePartyBalance(resolvedPartyId, 0));
+    return res.json({
+      success: true,
+      data: {
+        balance,
+        alreadyApplied: credited === null,
+        creditType: "DEPOSIT",
+        referenceId: holdingContractId.trim(),
+      },
+    });
+  }
+
+  const manualReferenceId = referenceId?.trim();
+  if (!manualReferenceId) {
+    return res.status(400).json({
+      error: "referenceId is required when holdingContractId is not provided",
+    });
+  }
+
+  const result = await creditManualBalance({
+    partyId: resolvedPartyId,
+    amount: parsedAmount,
+    referenceId: manualReferenceId,
+    createdBy: req.user.userId,
+    note: creditNote,
+  });
+
+  return res.json({
+    success: true,
+    data: {
+      balance: result.balance,
+      alreadyApplied: result.alreadyApplied,
+      creditType: "MANUAL_CREDIT",
+      referenceId: manualReferenceId,
+    },
+  });
 });
 
 export const listInstruments = asyncHandler(async (_req: Request, res: Response) => {

@@ -141,6 +141,60 @@ export async function creditDeposit(params: {
   }
 }
 
+export async function creditManualBalance(params: {
+  partyId: string;
+  amount: number;
+  referenceId: string;
+  createdBy?: string;
+  note?: string;
+}): Promise<{ balance: PartyBalanceView; alreadyApplied: boolean }> {
+  assertPositiveAmount(params.amount, "Credit amount");
+
+  const currency = getSettlementCurrency();
+  const referenceId = params.referenceId.trim();
+  if (!referenceId) {
+    throw new Error("referenceId is required for manual balance credits");
+  }
+
+  try {
+    const balance = await prisma.$transaction(async (tx) => {
+      const updated = await tx.partyBalance.upsert({
+        where: { partyId: params.partyId },
+        update: { available: { increment: decimalAmount(params.amount) } },
+        create: {
+          partyId: params.partyId,
+          available: decimalAmount(params.amount),
+          reserved: decimalAmount(0),
+          currency,
+        },
+      });
+
+      await tx.balanceLedgerEntry.create({
+        data: {
+          partyId: params.partyId,
+          entryType: "CREDIT",
+          amount: decimalAmount(params.amount),
+          currency,
+          referenceType: "MANUAL_CREDIT",
+          referenceId,
+          createdBy: params.createdBy,
+          note: params.note ?? "Operator manual balance credit",
+        },
+      });
+
+      return toBalanceView(updated);
+    });
+
+    return { balance, alreadyApplied: false };
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const balance = await getOrCreatePartyBalance(params.partyId, 0);
+      return { balance, alreadyApplied: true };
+    }
+    throw err;
+  }
+}
+
 export async function reserveBalance(params: {
   partyId: string;
   amount: number;

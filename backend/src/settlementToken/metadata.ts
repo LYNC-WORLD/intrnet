@@ -191,3 +191,52 @@ export function parseDepositorPartyFromInstructionPayload(
 
   return findPartyIdDeep(payload, exclude);
 }
+
+export function collectPartyIdsDeep(
+  value: unknown,
+  exclude: Set<string> = new Set(),
+  depth = 0,
+  found: Set<string> = new Set(),
+): string[] {
+  if (depth > 16 || value === null || value === undefined) return [...found];
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (isPartyId(trimmed) && !exclude.has(trimmed)) found.add(trimmed);
+    return [...found];
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectPartyIdsDeep(item, exclude, depth + 1, found);
+    return [...found];
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const [key, child] of Object.entries(record)) {
+      if (key === "sender" || key === "receiver" || key === "admin") continue;
+      collectPartyIdsDeep(child, exclude, depth + 1, found);
+    }
+  }
+
+  return [...found];
+}
+
+export function summarizeInstructionPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const transfer = parseTransferRecord(payload);
+  const transferMeta = parseMetaValues(transfer?.meta);
+  const instructionMeta = parseMetaValues(payload.meta);
+  const exclude = new Set(
+    [transfer?.sender, transfer?.receiver].filter((value): value is string => typeof value === "string"),
+  );
+  return {
+    transferSender: transfer?.sender ?? null,
+    transferReceiver: transfer?.receiver ?? null,
+    transferAmount: transfer?.amount ?? null,
+    transferMetaKeys: Object.keys(transferMeta),
+    transferMetaSample: transferMeta,
+    instructionMetaKeys: Object.keys(instructionMeta),
+    instructionMetaSample: instructionMeta,
+    partyIdsFound: collectPartyIdsDeep(payload, exclude),
+  };
+}

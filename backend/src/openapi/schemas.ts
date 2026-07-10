@@ -495,6 +495,26 @@ export const openApiComponents = {
       properties: { reason: { type: "string" } },
       required: ["reason"],
     },
+    ManualBalanceCreditRequest: {
+      type: "object",
+      description:
+        "Operator manual tUSD balance credit when automatic deposit sync cannot attribute a custody holding. " +
+        "Prefer holdingContractId (idempotent with deposit sync); otherwise supply a unique referenceId.",
+      properties: {
+        partyId: { ...partyId, description: "ACTIVE participant party to credit" },
+        amount: { type: "number", exclusiveMinimum: 0 },
+        holdingContractId: {
+          type: "string",
+          description: "Optional custody Holding contract id; credits with DEPOSIT reference (sync-safe)",
+        },
+        referenceId: {
+          type: "string",
+          description: "Required when holdingContractId is omitted; idempotency key for MANUAL_CREDIT",
+        },
+        note: { type: "string", description: "Optional audit note" },
+      },
+      required: ["partyId", "amount"],
+    },
     CreateAgreementRequest: {
       type: "object",
       properties: {

@@ -331,8 +331,12 @@ export class LedgerClient {
     const events: Array<Record<string, unknown>> = [];
     const appendFromUpdate = (update: Record<string, unknown> | undefined) => {
       if (!update) return;
-      const transaction = update.Transaction as { value?: { events?: Array<Record<string, unknown>> } } | undefined;
-      const txEvents = transaction?.value?.events;
+
+      const transaction = update.Transaction as
+        | { value?: { events?: Array<Record<string, unknown>> }; events?: Array<Record<string, unknown>> }
+        | undefined;
+      const txValue = transaction?.value;
+      const txEvents = txValue?.events ?? transaction?.events;
       if (Array.isArray(txEvents)) events.push(...txEvents);
     };
 
@@ -346,6 +350,26 @@ export class LedgerClient {
     const record = data as Record<string, unknown>;
     appendFromUpdate(record.update as Record<string, unknown> | undefined);
     return events;
+  }
+
+  async fetchTransactionEventsAtOffset(
+    offset: number,
+    opts: { transactionShape?: string } = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const shape = opts.transactionShape ?? "TRANSACTION_SHAPE_ACS_DELTA";
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/updates/update-by-offset", {
+        offset,
+        updateFormat: {
+          includeTransactions: {
+            eventFormat: wildcardEventFormat(parties),
+            transactionShape: shape,
+          },
+        },
+      }),
+    );
+    return this.parseUpdateResponseEvents(res.data);
   }
 
   private parseActiveContractEntry(item: Record<string, unknown>, interfaceId?: string) {
@@ -554,24 +578,13 @@ export class LedgerClient {
     };
   }
 
-  private updateTransactionFormat(parties: string[]) {
+  private updateTransactionFormat(parties: string[], transactionShape = "TRANSACTION_SHAPE_ACS_DELTA") {
     return {
       includeTransactions: {
         eventFormat: wildcardEventFormat(parties),
-        transactionShape: "TRANSACTION_SHAPE_ACS_DELTA",
+        transactionShape,
       },
     };
-  }
-
-  async fetchTransactionEventsAtOffset(offset: number): Promise<Array<Record<string, unknown>>> {
-    const parties = await this.resolveReadParties(await this.resolveParties());
-    const res = await this.withAuthRetry(() =>
-      this.http.post("/v2/updates/update-by-offset", {
-        offset,
-        updateFormat: this.updateTransactionFormat(parties),
-      }),
-    );
-    return this.parseUpdateResponseEvents(res.data);
   }
 
   async fetchTransactionEventsByUpdateId(updateId: string): Promise<Array<Record<string, unknown>>> {
@@ -583,6 +596,29 @@ export class LedgerClient {
       }),
     );
     return this.parseUpdateResponseEvents(res.data);
+  }
+
+  async fetchTransactionEventsAtOffsetWithFallback(offset: number): Promise<{
+    events: Array<Record<string, unknown>>;
+    transactionShape: string;
+    errors: string[];
+  }> {
+    const shapes = ["TRANSACTION_SHAPE_ACS_DELTA", "TRANSACTION_SHAPE_LEDGER_EFFECTS"];
+    const errors: string[] = [];
+    for (const shape of shapes) {
+      try {
+        const events = await this.fetchTransactionEventsAtOffset(offset, { transactionShape: shape });
+        if (events.length > 0) {
+          return { events, transactionShape: shape, errors };
+        }
+        errors.push(`${shape}: empty event list`);
+      } catch (err) {
+        errors.push(
+          `${shape}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return { events: [], transactionShape: shapes[shapes.length - 1]!, errors };
   }
 
   async allocateParty(partyIdHint: string) {

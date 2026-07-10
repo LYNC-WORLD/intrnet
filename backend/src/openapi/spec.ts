@@ -252,6 +252,30 @@ export const openApiSpec = {
         },
       },
     },
+    "/api/admin/balances/credit": {
+      post: {
+        tags: ["Admin"],
+        summary: "Manually credit a participant tUSD balance (operator)",
+        description:
+          "Credits an ACTIVE participant's internal settlement balance when automatic deposit attribution fails. " +
+          "Use holdingContractId from sync unattributed list for idempotent DEPOSIT credits, or referenceId for a standalone MANUAL_CREDIT.",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: json({ $ref: "#/components/schemas/ManualBalanceCreditRequest" }),
+        },
+        responses: {
+          "200": {
+            description: "Balance credited (or already applied)",
+            content: json(routeResponseSchemas.partyBalance),
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
     "/api/admin/instruments": {
       get: {
         tags: ["Admin"],
