@@ -5,9 +5,15 @@ import {
   resolveInstrumentAdmin,
   TRANSFER_INSTRUCTION_INTERFACE_ID,
 } from "../config/settlementToken";
-import { ExerciseEvents, matchesTemplate } from "../ledger/v2";
+import { ExerciseEvents, extractExerciseContractId, matchesTemplate } from "../ledger/v2";
 import { parsePositiveAmount } from "../utils/amount";
-import { parseTransferDepositorParty } from "./metadata";
+import { parseDepositorPartyFromInstructionPayload } from "./metadata";
+import {
+  extractCreatedHoldingCids,
+  extractReceiverHoldingCidsFromExerciseResult,
+  resolveReceiverHoldingCidsFromUpdate,
+  resolveTransferInstructionDepositor,
+} from "./depositAttribution";
 import { DisclosedContract, getTransferInstructionContext } from "./registryClient";
 
 export interface PendingIncomingTransfer {
@@ -94,26 +100,35 @@ function shouldEnforceInstrumentAdmin(): boolean {
 function extractReceiverHoldingCids(
   exerciseResult: unknown,
   events: ExerciseEvents,
+  rawEvents: Array<Record<string, unknown>>,
 ): string[] {
-  const cids = new Set<string>();
+  const cids = new Set<string>(extractReceiverHoldingCidsFromExerciseResult(exerciseResult));
 
-  const scan = (value: unknown) => {
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    const direct = record.receiverHoldingCids;
-    if (Array.isArray(direct)) {
-      for (const cid of direct) {
-        if (typeof cid === "string" && cid.trim()) cids.add(cid.trim());
-      }
-    }
-    if (record.output) scan(record.output);
-    if (record.value) scan(record.value);
+  const addCid = (value: unknown) => {
+    const cid = extractExerciseContractId(value);
+    if (cid) cids.add(cid);
   };
-  scan(exerciseResult);
+
+  for (const cid of extractCreatedHoldingCids(rawEvents)) {
+    cids.add(cid);
+  }
 
   for (const event of events) {
     if (event.created && matchesTemplate(event.created.templateId, "HoldingV1:Holding")) {
       cids.add(event.created.contractId);
+    }
+    if (event.created?.templateId.includes("Holding")) {
+      cids.add(event.created.contractId);
+    }
+  }
+
+  if (cids.size > 0) return [...cids];
+
+  for (const event of rawEvents) {
+    const exercised = event.ExercisedEvent as Record<string, unknown> | undefined;
+    if (!exercised || exercised.choice !== "TransferInstruction_Accept") continue;
+    for (const cid of extractReceiverHoldingCidsFromExerciseResult(exercised.exerciseResult)) {
+      addCid(cid);
     }
   }
 
@@ -161,7 +176,7 @@ export async function listPendingIncomingTransfers(
       receiver: transferReceiver,
       amount,
       instrumentId: instrument.id,
-      depositorPartyId: parseTransferDepositorParty(transfer),
+      depositorPartyId: parseDepositorPartyFromInstructionPayload(payload),
     });
   }
 
@@ -186,13 +201,27 @@ export async function acceptIncomingTransfer(
     disclosedContracts: toLedgerDisclosed(context.disclosedContracts),
   });
 
+  let receiverHoldingCids = extractReceiverHoldingCids(
+    result.exerciseResult,
+    result.events,
+    result.rawEvents,
+  );
+  if (receiverHoldingCids.length === 0 && result.updateId) {
+    receiverHoldingCids = await resolveReceiverHoldingCidsFromUpdate(result.updateId);
+  }
+
+  let depositorPartyId = instruction.depositorPartyId;
+  if (!depositorPartyId) {
+    depositorPartyId = await resolveTransferInstructionDepositor(instruction.contractId);
+  }
+
   return {
     contractId: instruction.contractId,
     sender: instruction.sender,
     amount: instruction.amount,
     updateId: result.updateId,
-    depositorPartyId: instruction.depositorPartyId,
-    receiverHoldingCids: extractReceiverHoldingCids(result.exerciseResult, result.events),
+    depositorPartyId,
+    receiverHoldingCids,
   };
 }
 

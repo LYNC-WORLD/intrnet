@@ -322,7 +322,29 @@ export class LedgerClient {
       updateId: transaction.updateId ?? null,
       exerciseResult: exercised?.exerciseResult ?? null,
       events: toLegacyEvents(transaction.events),
+      rawEvents: transaction.events,
     };
+  }
+
+  private parseUpdateResponseEvents(data: unknown): Array<Record<string, unknown>> {
+    const events: Array<Record<string, unknown>> = [];
+    const appendFromUpdate = (update: Record<string, unknown> | undefined) => {
+      if (!update) return;
+      const transaction = update.Transaction as { value?: { events?: Array<Record<string, unknown>> } } | undefined;
+      const txEvents = transaction?.value?.events;
+      if (Array.isArray(txEvents)) events.push(...txEvents);
+    };
+
+    if (Array.isArray(data)) {
+      for (const item of data as Array<Record<string, unknown>>) {
+        appendFromUpdate(item.update as Record<string, unknown> | undefined);
+      }
+      return events;
+    }
+
+    const record = data as Record<string, unknown>;
+    appendFromUpdate(record.update as Record<string, unknown> | undefined);
+    return events;
   }
 
   private parseActiveContractEntry(item: Record<string, unknown>, interfaceId?: string) {
@@ -530,9 +552,8 @@ export class LedgerClient {
   async fetchTransactionEventsAtOffset(offset: number): Promise<Array<Record<string, unknown>>> {
     const parties = await this.resolveReadParties(await this.resolveParties());
     const res = await this.withAuthRetry(() =>
-      this.http.post("/v2/updates", {
-        beginExclusive: Math.max(0, offset - 1),
-        endInclusive: offset,
+      this.http.post("/v2/updates/update-by-offset", {
+        offset,
         updateFormat: {
           includeTransactions: {
             eventFormat: wildcardEventFormat(parties),
@@ -541,15 +562,23 @@ export class LedgerClient {
         },
       }),
     );
+    return this.parseUpdateResponseEvents(res.data);
+  }
 
-    const events: Array<Record<string, unknown>> = [];
-    for (const item of res.data as Array<Record<string, unknown>>) {
-      const update = item.update as Record<string, unknown> | undefined;
-      const transaction = update?.Transaction as { value?: { events?: Array<Record<string, unknown>> } } | undefined;
-      const txEvents = transaction?.value?.events;
-      if (Array.isArray(txEvents)) events.push(...txEvents);
-    }
-    return events;
+  async fetchTransactionEventsByUpdateId(updateId: string): Promise<Array<Record<string, unknown>>> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/updates/update-by-id", {
+        updateId,
+        updateFormat: {
+          includeTransactions: {
+            eventFormat: wildcardEventFormat(parties),
+            transactionShape: "TRANSACTION_SHAPE_LEDGER_EFFECTS",
+          },
+        },
+      }),
+    );
+    return this.parseUpdateResponseEvents(res.data);
   }
 
   async allocateParty(partyIdHint: string) {

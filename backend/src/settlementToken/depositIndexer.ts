@@ -2,7 +2,11 @@ import { prisma } from "../db";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { listTokenHoldings } from "./holdingsService";
 import { acceptPendingIncomingTransfers } from "./transferInstructionService";
-import { resolveHoldingDepositorParty } from "./depositAttribution";
+import {
+  resolveHoldingDepositorParty,
+  resolveReceiverHoldingCidsFromUpdate,
+  resolveTransferInstructionDepositor,
+} from "./depositAttribution";
 import { creditDeposit, sumRecordedDepositCredits } from "../services/balanceService";
 import { getSettlementCurrency } from "../config/settlementToken";
 
@@ -69,6 +73,38 @@ async function creditDepositForParty(params: {
   return 0;
 }
 
+function amountsMatch(left: number, right: number): boolean {
+  return Math.abs(left - right) < 0.00000001;
+}
+
+async function resolveAcceptedHoldingCids(params: {
+  accepted: {
+    amount: number;
+    updateId: string | null;
+    receiverHoldingCids: string[];
+    contractId: string;
+  };
+  holdingsById: Map<string, { contractId: string; amount: number }>;
+  creditedHoldingIds: Set<string>;
+}): Promise<string[]> {
+  if (params.accepted.receiverHoldingCids.length > 0) {
+    return params.accepted.receiverHoldingCids;
+  }
+
+  if (params.accepted.updateId) {
+    const fromUpdate = await resolveReceiverHoldingCidsFromUpdate(params.accepted.updateId);
+    if (fromUpdate.length > 0) return fromUpdate;
+  }
+
+  return [...params.holdingsById.values()]
+    .filter(
+      (holding) =>
+        !params.creditedHoldingIds.has(holding.contractId) &&
+        amountsMatch(holding.amount, params.accepted.amount),
+    )
+    .map((holding) => holding.contractId);
+}
+
 export async function reconcileDeposits(createdBy?: string): Promise<DepositReconcileResult> {
   const custodyParty = await getOperatorPartyId();
   const currency = getSettlementCurrency();
@@ -87,13 +123,24 @@ export async function reconcileDeposits(createdBy?: string): Promise<DepositReco
   let alreadyApplied = 0;
 
   for (const accepted of transfersAccepted) {
-    if (!accepted.depositorPartyId || accepted.receiverHoldingCids.length === 0) continue;
+    let depositorPartyId = accepted.depositorPartyId;
+    if (!depositorPartyId) {
+      depositorPartyId = await resolveTransferInstructionDepositor(accepted.contractId);
+    }
+    if (!depositorPartyId) continue;
 
-    for (const holdingContractId of accepted.receiverHoldingCids) {
+    const holdingCids = await resolveAcceptedHoldingCids({
+      accepted,
+      holdingsById,
+      creditedHoldingIds,
+    });
+    if (holdingCids.length === 0) continue;
+
+    for (const holdingContractId of holdingCids) {
       const holding = holdingsById.get(holdingContractId);
       const amount = holding?.amount ?? accepted.amount;
       alreadyApplied += await creditDepositForParty({
-        partyId: accepted.depositorPartyId,
+        partyId: depositorPartyId,
         amount,
         holdingContractId,
         createdBy,

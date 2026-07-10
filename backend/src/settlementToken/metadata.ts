@@ -13,6 +13,15 @@ export function isPartyId(value: string): boolean {
   return PARTY_ID_PATTERN.test(value.trim());
 }
 
+function unwrapMetaValue(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.value === "string") return record.value;
+  if (record.tag === "Some" && typeof record.value === "string") return record.value;
+  return null;
+}
+
 export function parseMetaValues(meta: unknown): Record<string, string> {
   if (!meta || typeof meta !== "object") return {};
   const record = meta as Record<string, unknown>;
@@ -22,7 +31,8 @@ export function parseMetaValues(meta: unknown): Record<string, string> {
   if (typeof raw === "object" && !Array.isArray(raw)) {
     const out: Record<string, string> = {};
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (typeof value === "string") out[key] = value;
+      const unwrapped = unwrapMetaValue(value);
+      if (unwrapped !== null) out[key] = unwrapped;
     }
     return out;
   }
@@ -32,13 +42,13 @@ export function parseMetaValues(meta: unknown): Record<string, string> {
     for (const entry of raw) {
       if (Array.isArray(entry) && entry.length >= 2) {
         const key = entry[0];
-        const value = entry[1];
-        if (typeof key === "string" && typeof value === "string") out[key] = value;
+        const value = unwrapMetaValue(entry[1]);
+        if (typeof key === "string" && value !== null) out[key] = value;
       } else if (entry && typeof entry === "object") {
         const pair = entry as Record<string, unknown>;
         const key = pair.key ?? pair._1 ?? pair.fst;
-        const value = pair.value ?? pair._2 ?? pair.snd;
-        if (typeof key === "string" && typeof value === "string") out[key] = value;
+        const value = unwrapMetaValue(pair.value ?? pair._2 ?? pair.snd);
+        if (typeof key === "string" && value !== null) out[key] = value;
       }
     }
     return out;
@@ -72,12 +82,62 @@ export function parseReferenceFromMeta(meta: unknown): string | null {
   }
 
   for (const [key, candidate] of Object.entries(values)) {
-    if (!/reference|depositor|party/i.test(key)) continue;
+    if (!/reference|depositor|party|recipient/i.test(key)) continue;
     if (typeof candidate === "string" && isPartyId(candidate)) {
       return candidate.trim();
     }
   }
 
+  for (const candidate of Object.values(values)) {
+    if (typeof candidate === "string" && isPartyId(candidate)) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function findPartyIdDeep(
+  value: unknown,
+  exclude: Set<string>,
+  depth = 0,
+): string | null {
+  if (depth > 12 || value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (isPartyId(trimmed) && !exclude.has(trimmed)) return trimmed;
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findPartyIdDeep(item, exclude, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const [key, child] of Object.entries(record)) {
+      if (key === "sender" || key === "receiver" || key === "admin") continue;
+      const found = findPartyIdDeep(child, exclude, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+export function parseTransferRecord(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const transfer = payload.transfer;
+  if (transfer && typeof transfer === "object") {
+    return transfer as Record<string, unknown>;
+  }
+  if (typeof payload.receiver === "string" && typeof payload.sender === "string") {
+    return payload;
+  }
   return null;
 }
 
@@ -111,4 +171,23 @@ export function parseTransferDepositorParty(transfer: Record<string, unknown>): 
   if (topLevel) return topLevel;
 
   return null;
+}
+
+export function parseDepositorPartyFromInstructionPayload(
+  payload: Record<string, unknown>,
+): string | null {
+  const transfer = parseTransferRecord(payload);
+  const exclude = new Set(
+    [transfer?.sender, transfer?.receiver].filter((value): value is string => typeof value === "string"),
+  );
+
+  if (transfer) {
+    const fromTransfer = parseTransferDepositorParty(transfer);
+    if (fromTransfer) return fromTransfer;
+  }
+
+  const fromInstructionMeta = parseReferenceFromMeta(payload.meta);
+  if (fromInstructionMeta) return fromInstructionMeta;
+
+  return findPartyIdDeep(payload, exclude);
 }
