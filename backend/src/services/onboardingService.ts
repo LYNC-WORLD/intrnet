@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
-import { T, qualifiedTemplate } from "../ledger/templateIds";
+import { T, pqsTemplateRef } from "../ledger/templateIds";
 import { ValidatorCantonAdapter } from "../canton/validatorAdapter";
 import { slugify } from "../utils/crypto";
 import { isServiceError } from "../utils/http";
@@ -116,7 +116,7 @@ async function approveOnOldestAgreement(
        WHERE package_id = $2
        ORDER BY created_effective_at ASC
        LIMIT 1`,
-    [qualifiedTemplate(T.NettingAgreement, packageId), packageId],
+    [pqsTemplateRef(T.NettingAgreement), packageId],
   );
   if (!rows.length) {
     throw new Error("No NettingAgreement found on ledger for auto-approval");
