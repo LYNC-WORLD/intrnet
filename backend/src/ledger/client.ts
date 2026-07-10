@@ -9,6 +9,7 @@ import {
   toLegacyEvents,
   interfaceEventFormat,
   wildcardEventFormat,
+  parseLedgerOffset,
 } from "./v2";
 import { withProxyHostHeader } from "../http/proxyHeaders";
 import { clearOperatorLedgerTokenCache, getOperatorLedgerToken } from "./tokenProvider";
@@ -537,15 +538,28 @@ export class LedgerClient {
     return {
       created: createdEvent
         ? {
-            offset: typeof createdBlock?.offset === "number" ? createdBlock.offset : null,
+            offset:
+              parseLedgerOffset(createdEvent.offset) ??
+              parseLedgerOffset(createdBlock?.offset),
             payload: (createdEvent.createArgument ?? {}) as Record<string, unknown>,
           }
         : null,
       archived: archivedEvent
         ? {
-            offset: typeof archivedBlock?.offset === "number" ? archivedBlock.offset : null,
+            offset:
+              parseLedgerOffset(archivedEvent.offset) ??
+              parseLedgerOffset(archivedBlock?.offset),
           }
         : null,
+    };
+  }
+
+  private updateTransactionFormat(parties: string[]) {
+    return {
+      includeTransactions: {
+        eventFormat: wildcardEventFormat(parties),
+        transactionShape: "TRANSACTION_SHAPE_ACS_DELTA",
+      },
     };
   }
 
@@ -554,12 +568,7 @@ export class LedgerClient {
     const res = await this.withAuthRetry(() =>
       this.http.post("/v2/updates/update-by-offset", {
         offset,
-        updateFormat: {
-          includeTransactions: {
-            eventFormat: wildcardEventFormat(parties),
-            transactionShape: "TRANSACTION_SHAPE_LEDGER_EFFECTS",
-          },
-        },
+        updateFormat: this.updateTransactionFormat(parties),
       }),
     );
     return this.parseUpdateResponseEvents(res.data);
@@ -570,12 +579,7 @@ export class LedgerClient {
     const res = await this.withAuthRetry(() =>
       this.http.post("/v2/updates/update-by-id", {
         updateId,
-        updateFormat: {
-          includeTransactions: {
-            eventFormat: wildcardEventFormat(parties),
-            transactionShape: "TRANSACTION_SHAPE_LEDGER_EFFECTS",
-          },
-        },
+        updateFormat: this.updateTransactionFormat(parties),
       }),
     );
     return this.parseUpdateResponseEvents(res.data);

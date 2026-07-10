@@ -16,6 +16,7 @@ import {
 } from "./balanceService";
 import { getTokenHoldingsTotal } from "../settlementToken/holdingsService";
 import { executeTokenTransfer } from "../settlementToken/transferService";
+import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
   getInstruction,
   listCycleIdsByAgreement,
@@ -58,15 +59,22 @@ export async function getSettlementBalance(
 ): Promise<SettlementBalanceView> {
   const balance = await getOrCreatePartyBalance(partyId, 0);
   let holdingsTotal: number | null = null;
-  try {
-    holdingsTotal = await getTokenHoldingsTotal(partyId);
-  } catch (err) {
-    console.warn(
-      `Failed to fetch holdings total for ${partyId}:`,
-      err instanceof Error ? err.message : err,
-    );
-    holdingsTotal = null;
+
+  // Custodial tUSD: Holdings sit on the operator custody party. The operator M2M user
+  // only has CanReadAs for operator parties, so querying a participant ACS returns 403.
+  const custodyParty = await getOperatorPartyId();
+  if (partyId === custodyParty) {
+    try {
+      holdingsTotal = await getTokenHoldingsTotal(partyId);
+    } catch (err) {
+      console.warn(
+        `Failed to fetch holdings total for ${partyId}:`,
+        err instanceof Error ? err.message : err,
+      );
+      holdingsTotal = null;
+    }
   }
+
   return {
     partyId: balance.partyId,
     currency: balance.currency,

@@ -189,3 +189,9 @@ export function findCreatedEvent(
   }
   return null;
 }
+
+export function parseLedgerOffset(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value.trim());
+  return null;
+}
