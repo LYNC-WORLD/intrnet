@@ -5,13 +5,18 @@ import { T } from "../ledger/templateIds";
 import { ValidatorCantonAdapter } from "../canton/validatorAdapter";
 import { slugify } from "../utils/crypto";
 import { isServiceError } from "../utils/http";
-import { resolveAgreementFromInput, syncUserAgreementContractId } from "./agreementsService";
+import * as adminService from "../services/adminService";
+import {
+  resolveAgreementFromInput,
+  syncUserAgreementContractId,
+} from "./agreementsService";
 import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 import {
   extractRecreatedContractId,
   findCreatedEvent,
   partyInList,
 } from "../ledger/v2";
+import { pqs } from "../db/pqs";
 
 export interface OnboardingFormInput {
   email: string;
@@ -39,10 +44,24 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-export async function submitOnboardingRequest(userId: string, input: OnboardingFormInput) {
+function pkg(): string {
+  const id = process.env.INTRNET_PACKAGE_ID?.trim();
+  if (!id) {
+    throw new Error(
+      "INTRNET_PACKAGE_ID is required for PQS contract reads (set to your deployed Intrnet package hash)",
+    );
+  }
+  return id;
+}
+
+export async function submitOnboardingRequest(
+  userId: string,
+  input: OnboardingFormInput,
+) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error("User not found");
-  if (user.role !== "participant") throw new Error("Operators cannot create onboarding requests");
+  if (user.role !== "participant")
+    throw new Error("Operators cannot create onboarding requests");
   if (user.status === "ACTIVE") throw new Error("User is already approved");
 
   const email = normalizeEmail(input.email);
@@ -57,8 +76,7 @@ export async function submitOnboardingRequest(userId: string, input: OnboardingF
     where: { id: userId },
     data: { email },
   });
-
-  return prisma.onboardingRequest.upsert({
+  const onboardingUser = await prisma.onboardingRequest.upsert({
     where: { userId },
     update: {
       companyName: input.companyName,
@@ -78,6 +96,33 @@ export async function submitOnboardingRequest(userId: string, input: OnboardingF
       state: "SUBMITTED",
     },
   });
+  await approveOnboardedUser(onboardingUser.id, "", onboardingUser.companyName, "2000"); // TODO: Change deposit amount, Change the approver user ID
+  return onboardingUser;
+}
+
+async function approveOnboardedUser(requestId: string, approverUserId: string, partyHint: string, initialBalance: string) {
+  const packageId = pkg();
+  const { rows } = await pqs.query(
+    `SELECT * FROM active($1)
+       WHERE package_id = $2
+       ORDER BY created_effective_at ASC
+       LIMIT 1`,
+    [T.NettingAgreement, packageId],
+  );
+  if (rows) {
+    console.log(rows[0]);
+    const agreementId = rows[0].payload.agreementId;
+    const agreementContractId = rows[0].contract_id;
+    adminService.approveOnboardingRequest({
+      requestId,
+      approverUserId,
+      partyHint,
+      agreementId,
+      agreementContractId,
+      initialBalance
+    });
+  }
+  return;
 }
 
 export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
@@ -91,10 +136,13 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   }
 
   const user = request.user;
-  if (user.role !== "participant") throw new Error("Only participant requests can be approved");
+  if (user.role !== "participant")
+    throw new Error("Only participant requests can be approved");
   if (!user.oauthSub) throw new Error("User has no OAuth subject linked");
 
-  const hint = slugify(input.partyHint || request.partyHint || request.companyName);
+  const hint = slugify(
+    input.partyHint || request.partyHint || request.companyName,
+  );
   if (!hint) throw new Error("partyHint/companyName must produce a valid slug");
 
   const adapter = new ValidatorCantonAdapter();
@@ -128,23 +176,41 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
       argument: { newParticipant: partyId },
     });
 
-    await auditLedgerExercise(T.NettingAgreement, "AddParticipant", agreementContractId, result.events, {
-      argument: { newParticipant: partyId },
-    });
+    await auditLedgerExercise(
+      T.NettingAgreement,
+      "AddParticipant",
+      agreementContractId,
+      result.events,
+      {
+        argument: { newParticipant: partyId },
+      },
+    );
 
     const created =
       findCreatedEvent(
-        result.events as Array<{ created?: { contractId: string; templateId: string; payload: Record<string, unknown> } }>,
+        result.events as Array<{
+          created?: {
+            contractId: string;
+            templateId: string;
+            payload: Record<string, unknown>;
+          };
+        }>,
         T.NettingAgreement,
       ) ?? null;
     const newContractId =
       extractRecreatedContractId(
         result.exerciseResult,
-        result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+        result.events as Array<{
+          created?: { contractId: string; templateId: string };
+        }>,
         T.NettingAgreement,
-      ) ?? created?.contractId ?? null;
+      ) ??
+      created?.contractId ??
+      null;
     if (!newContractId) {
-      throw new Error("AddParticipant did not return a new NettingAgreement contract id");
+      throw new Error(
+        "AddParticipant did not return a new NettingAgreement contract id",
+      );
     }
 
     agreementContractId = newContractId;
@@ -154,20 +220,27 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   const operatorPartyId = await getOperatorPartyId();
   const currency = process.env.APP_DEFAULT_CURRENCY ?? "USD";
 
-  const existingAccount = (await client.query(T.CashAccount, { owner: partyId })).find(
-    (account) => account.payload.currency === currency,
-  );
+  const existingAccount = (
+    await client.query(T.CashAccount, { owner: partyId })
+  ).find((account) => account.payload.currency === currency);
   if (!existingAccount) {
     const account = await client.create({
       templateId: T.CashAccount,
       payload: {
         owner: partyId,
         currency,
-        balance: input.initialBalance ?? String(process.env.ONBOARDING_INITIAL_BALANCE ?? "0"),
+        balance:
+          input.initialBalance ??
+          String(process.env.ONBOARDING_INITIAL_BALANCE ?? "0"),
         operator: operatorPartyId,
       },
     });
-    await auditLedgerCreate(T.CashAccount, account.contractId, account.payload, operatorPartyId);
+    await auditLedgerCreate(
+      T.CashAccount,
+      account.contractId,
+      account.payload,
+      operatorPartyId,
+    );
   }
 
   const updatedUser = await prisma.user.update({
@@ -201,7 +274,11 @@ export async function approveAndProvisionUser(input: ApproveOnboardingInput) {
   };
 }
 
-export async function rejectOnboardingRequest(requestId: string, approverUserId: string, reason: string) {
+export async function rejectOnboardingRequest(
+  requestId: string,
+  approverUserId: string,
+  reason: string,
+) {
   const request = await prisma.onboardingRequest.findUnique({
     where: { id: requestId },
     select: { id: true, userId: true },
