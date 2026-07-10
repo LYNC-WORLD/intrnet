@@ -5,16 +5,11 @@ import {
   useObligations,
   useCycles,
   usePositions,
-  useSettlementAccounts,
+  useSettlementBalance,
   useAcceptObligation,
   useRejectObligation,
 } from "../../hooks/queries";
-import {
-  NetPosition,
-  CashAccount,
-  NettingCycle,
-  Obligation,
-} from "../../types";
+import { NetPosition, NettingCycle, Obligation } from "../../types";
 import {
   KpiCard,
   Card,
@@ -41,7 +36,7 @@ export default function Dashboard() {
     limit: 1,
   });
   const { data: positionsData } = usePositions();
-  const { data: accountsData } = useSettlementAccounts();
+  const { data: balance } = useSettlementBalance();
   const { data: cyclesData } = useCycles();
 
   const acceptMutation = useAcceptObligation();
@@ -58,12 +53,6 @@ export default function Dashboard() {
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       )[0]
     : null;
-
-  const accounts: CashAccount[] = Array.isArray(accountsData)
-    ? accountsData
-    : [];
-  const balance =
-    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
 
   const cycles: NettingCycle[] = Array.isArray(cyclesData) ? cyclesData : [];
   const openCycle = cycles.find((c) => c?.status === "OPEN") ?? null;
@@ -148,7 +137,7 @@ export default function Dashboard() {
         <KpiCard
           label="Cash Balance"
           value={
-            balance ? fmt.currency(balance.balance, balance.currency) : "—"
+            balance ? fmt.currency(balance.available, balance.currency) : "—"
           }
           sub="On-ledger account"
         />

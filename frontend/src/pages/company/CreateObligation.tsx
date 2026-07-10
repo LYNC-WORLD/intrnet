@@ -6,6 +6,7 @@ import {
   useFxRates,
   useAgreement,
   useCreateObligation,
+  useSettlementBalance,
 } from "../../hooks/queries";
 import { Participant } from "../../types";
 import {
@@ -16,6 +17,7 @@ import {
   Textarea,
   Button,
   PageLoader,
+  Alert,
 } from "../../components/ui";
 import { fmt, convertToUSD } from "../../utils";
 import { useAuth } from "@/context/AuthContext";
@@ -31,6 +33,7 @@ export default function CreateObligation() {
   const { data: agreementData, isLoading: loadingAgreement } = useAgreement(
     user?.agreementId ?? undefined,
   );
+  const { data: balance, isLoading: loadingBalance } = useSettlementBalance();
   const createMutation = useCreateObligation();
 
   const [success, setSuccess] = useState<string | null>(null);
@@ -53,12 +56,16 @@ export default function CreateObligation() {
       ? convertToUSD(Number(form.amount), form.currency, rates)
       : null;
 
+  const exceedsBalance =
+    balance != null && estimatedUsd != null && estimatedUsd > balance.available;
+
   const valid =
     form.receiver &&
     form.amount &&
     Number(form.amount) > 0 &&
     form.invoiceRef &&
-    form.description;
+    form.description &&
+    !exceedsBalance;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +92,8 @@ export default function CreateObligation() {
     );
   };
 
-  const loading = loadingParticipants || loadingRates || loadingAgreement;
+  const loading =
+    loadingParticipants || loadingRates || loadingAgreement || loadingBalance;
   if (loading) return <PageLoader />;
 
   if (success) {
@@ -147,6 +155,7 @@ export default function CreateObligation() {
                   setForm((f) => ({ ...f, amount: e.target.value }))
                 }
                 required
+                error={exceedsBalance ? "Exceeds available balance" : undefined}
               />
               <Select
                 label="Currency"
@@ -185,8 +194,32 @@ export default function CreateObligation() {
               </p>
               <p className="text-xs text-bone-700 mt-1">
                 Display only · based on latest FX rate
+                {balance && (
+                  <>
+                    {" "}
+                    · Available balance:{" "}
+                    <span title="Total balance minus any funds reserved for other pending obligations">
+                      {fmt.currency(balance.available, balance.currency)}
+                    </span>
+                  </>
+                )}
               </p>
             </div>
+
+            {exceedsBalance && (
+              <Alert type="error">
+                <strong>Insufficient available balance.</strong> This obligation
+                exceeds your available balance of{" "}
+                {fmt.currency(balance!.available, balance!.currency)}
+                {balance!.reserved > 0 && (
+                  <>
+                    {" "}
+                    ({fmt.currency(balance!.reserved, balance!.currency)} is
+                    currently reserved for other pending obligations).
+                  </>
+                )}
+              </Alert>
+            )}
 
             <Button
               type="submit"

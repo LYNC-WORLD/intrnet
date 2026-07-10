@@ -176,11 +176,11 @@ export function useSettlementInstructions(params?: Record<string, string>) {
   });
 }
 
-export function useSettlementAccounts(params?: Record<string, string>) {
+export function useSettlementBalance() {
   const { isAuthenticated } = useAuth();
   return useQuery({
-    queryKey: QK.accounts(params),
-    queryFn: () => settlementApi.accounts(params).then((r) => r.data),
+    queryKey: ["balance"],
+    queryFn: () => settlementApi.balance().then((r) => r.data),
     enabled: isAuthenticated,
     staleTime: POLL_INTERVAL,
     refetchInterval: POLL_INTERVAL,
