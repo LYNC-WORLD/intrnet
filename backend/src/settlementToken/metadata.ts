@@ -7,6 +7,9 @@ const REFERENCE_META_KEYS = [
   "partyId",
   "party_id",
   "recipient",
+  "utility.digitalasset.com/reference",
+  "utility.digitalasset.com/depositor",
+  "splice.lfdecentralizedtrust.org/reference",
 ];
 
 export function isPartyId(value: string): boolean {
@@ -82,7 +85,7 @@ export function parseReferenceFromMeta(meta: unknown): string | null {
   }
 
   for (const [key, candidate] of Object.entries(values)) {
-    if (!/reference|depositor|party|recipient/i.test(key)) continue;
+    if (!/reference|depositor|party|recipient/i.test(key) && !key.endsWith("/reference")) continue;
     if (typeof candidate === "string" && isPartyId(candidate)) {
       return candidate.trim();
     }

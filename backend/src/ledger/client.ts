@@ -600,25 +600,45 @@ export class LedgerClient {
 
   async fetchTransactionEventsAtOffsetWithFallback(offset: number): Promise<{
     events: Array<Record<string, unknown>>;
-    transactionShape: string;
+    transactionShapes: string[];
     errors: string[];
   }> {
     const shapes = ["TRANSACTION_SHAPE_ACS_DELTA", "TRANSACTION_SHAPE_LEDGER_EFFECTS"];
     const errors: string[] = [];
+    const merged: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+
+    const eventKey = (event: Record<string, unknown>): string => {
+      const created = event.CreatedEvent as Record<string, unknown> | undefined;
+      if (typeof created?.contractId === "string") return `created:${created.contractId}`;
+      const archived = event.ArchivedEvent as Record<string, unknown> | undefined;
+      if (typeof archived?.contractId === "string") return `archived:${archived.contractId}`;
+      const exercised = event.ExercisedEvent as Record<string, unknown> | undefined;
+      if (typeof exercised?.contractId === "string") {
+        return `exercised:${exercised.contractId}:${exercised.choice ?? ""}`;
+      }
+      return JSON.stringify(event);
+    };
+
     for (const shape of shapes) {
       try {
         const events = await this.fetchTransactionEventsAtOffset(offset, { transactionShape: shape });
-        if (events.length > 0) {
-          return { events, transactionShape: shape, errors };
+        if (events.length === 0) {
+          errors.push(`${shape}: empty event list`);
+          continue;
         }
-        errors.push(`${shape}: empty event list`);
+        for (const event of events) {
+          const key = eventKey(event);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(event);
+        }
       } catch (err) {
-        errors.push(
-          `${shape}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        errors.push(`${shape}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    return { events: [], transactionShape: shapes[shapes.length - 1]!, errors };
+
+    return { events: merged, transactionShapes: shapes, errors };
   }
 
   async allocateParty(partyIdHint: string) {

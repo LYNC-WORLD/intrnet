@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
-import { extractExerciseContractId, matchesTemplate } from "../ledger/v2";
+import { extractExerciseContractId, matchesTemplate, templateSuffix } from "../ledger/v2";
 import {
   HOLDING_INTERFACE_ID,
   TRANSFER_INSTRUCTION_INTERFACE_ID,
@@ -21,6 +21,7 @@ import {
   parseTransferRecord,
   summarizeInstructionPayload,
 } from "./metadata";
+import { listActiveParticipantUsers, PARTICIPANT_ROLE } from "./participantUsers";
 
 export interface DepositorResolution {
   partyId: string | null;
@@ -67,7 +68,7 @@ async function matchDepositorToActiveUser(
   const exactUsers = await prisma.user.findMany({
     where: {
       status: "ACTIVE",
-      role: "PARTICIPANT",
+      role: PARTICIPANT_ROLE,
       partyId: { in: partyIds },
     },
     select: { partyId: true, email: true },
@@ -86,7 +87,7 @@ async function matchDepositorToActiveUser(
   }
 
   const activeUsers = await prisma.user.findMany({
-    where: { status: "ACTIVE", role: "PARTICIPANT", partyId: { not: null } },
+    where: { status: "ACTIVE", role: PARTICIPANT_ROLE, partyId: { not: null } },
     select: { partyId: true, email: true },
   });
   const fingerprintMatches = activeUsers.filter((user) => {
@@ -135,6 +136,17 @@ async function resolveDepositorFromPayloadWithDb(
     summary: summarizeInstructionPayload(payload),
   });
   return matchDepositorToActiveUser(partyIds, audit);
+}
+
+function extractAllArchivedContractCids(events: Array<Record<string, unknown>>): string[] {
+  const cids: string[] = [];
+  for (const event of events) {
+    const archived = event.ArchivedEvent as Record<string, unknown> | undefined;
+    if (!archived) continue;
+    const contractId = archived.contractId;
+    if (typeof contractId === "string") cids.push(contractId);
+  }
+  return cids;
 }
 
 function extractArchivedTransferInstructionCids(events: Array<Record<string, unknown>>): string[] {
@@ -204,11 +216,19 @@ function summarizeTransactionEvents(events: Array<Record<string, unknown>>): Rec
   const exercised = events
     .map((event) => (event.ExercisedEvent as Record<string, unknown> | undefined)?.choice)
     .filter((choice): choice is string => typeof choice === "string");
+  const archivedContracts = events
+    .map((event) => event.ArchivedEvent as Record<string, unknown> | undefined)
+    .filter((archived): archived is Record<string, unknown> => Boolean(archived))
+    .map((archived) => ({
+      contractId: archived.contractId,
+      template: typeof archived.templateId === "string" ? templateSuffix(archived.templateId) : null,
+    }));
   return {
     eventCount: events.length,
     created,
     archived,
     exercisedChoices: exercised,
+    archivedContracts,
     archivedTransferInstructions: extractArchivedTransferInstructionCids(events),
     createdHoldings: extractCreatedHoldingCids(events),
   };
@@ -241,10 +261,18 @@ async function resolveDepositorFromInstructionContract(
   instructionContractId: string,
   audit: DepositAttributionAudit,
   expectedAmount?: number,
+  opts: { quiet?: boolean } = {},
 ): Promise<string | null> {
   const payload = await fetchInstructionPayload(instructionContractId);
   if (!payload) {
-    auditStep(audit, "instruction_fetch_failed", instructionContractId);
+    if (!opts.quiet) {
+      auditStep(audit, "instruction_fetch_failed", instructionContractId);
+    }
+    return null;
+  }
+
+  const transfer = parseTransferRecord(payload);
+  if (!transfer) {
     return null;
   }
 
@@ -267,21 +295,30 @@ async function resolveDepositorFromAcceptTransaction(
 ): Promise<string | null> {
   auditStep(audit, "accept_tx_summary", undefined, summarizeTransactionEvents(events));
 
-  for (const instructionCid of extractArchivedTransferInstructionCids(events)) {
-    const depositor = await resolveDepositorFromInstructionContract(
-      instructionCid,
-      audit,
-      expectedAmount,
-    );
-    if (depositor) return depositor;
-  }
-
   for (const event of events) {
     const exercised = event.ExercisedEvent as Record<string, unknown> | undefined;
     if (!exercised || exercised.choice !== "TransferInstruction_Accept") continue;
     const contractId = exercised.contractId;
     if (typeof contractId !== "string") continue;
+    auditStep(audit, "accept_exercised_instruction", contractId);
     const depositor = await resolveDepositorFromInstructionContract(contractId, audit, expectedAmount);
+    if (depositor) return depositor;
+  }
+
+  const candidateCids = [
+    ...extractArchivedTransferInstructionCids(events),
+    ...extractAllArchivedContractCids(events),
+  ];
+  const seen = new Set<string>();
+  for (const instructionCid of candidateCids) {
+    if (seen.has(instructionCid)) continue;
+    seen.add(instructionCid);
+    const depositor = await resolveDepositorFromInstructionContract(
+      instructionCid,
+      audit,
+      expectedAmount,
+      { quiet: true },
+    );
     if (depositor) return depositor;
   }
 
@@ -339,7 +376,8 @@ export async function resolveHoldingDepositorParty(
   if (createdOffset !== null && createdOffset !== undefined) {
     try {
       const tx = await client.fetchTransactionEventsAtOffsetWithFallback(createdOffset);
-      auditStep(audit, "accept_tx_fetch", `shape=${tx.transactionShape} events=${tx.events.length}`, {
+      auditStep(audit, "accept_tx_fetch", `events=${tx.events.length}`, {
+        transactionShapes: tx.transactionShapes,
         errors: tx.errors,
         summary: summarizeTransactionEvents(tx.events),
       });
@@ -369,19 +407,18 @@ export async function resolveTransferInstructionDepositor(
 async function resolveSingleActiveParticipantFallback(
   audit: DepositAttributionAudit,
 ): Promise<string | null> {
-  const users = await prisma.user.findMany({
-    where: {
-      status: "ACTIVE",
-      role: "PARTICIPANT",
-      partyId: { not: null },
-    },
-    select: { partyId: true, email: true },
-  });
+  const users = await listActiveParticipantUsers();
   auditStep(audit, "active_participants", String(users.length), {
-    participants: users.map((user) => ({ partyId: user.partyId, email: user.email })),
+    participants: users,
   });
-  if (users.length !== 1 || !users[0].partyId) {
-    auditStep(audit, "single_participant_fallback_skipped", "Need exactly one ACTIVE participant for fallback");
+  if (users.length !== 1) {
+    auditStep(
+      audit,
+      "single_participant_fallback_skipped",
+      users.length === 0
+        ? "No ACTIVE participants with role participant"
+        : "Need exactly one ACTIVE participant for fallback",
+    );
     return null;
   }
   auditStep(audit, "single_participant_fallback", users[0].partyId, { email: users[0].email });
@@ -389,14 +426,7 @@ async function resolveSingleActiveParticipantFallback(
 }
 
 export async function listActiveParticipantPartyIds(): Promise<Array<{ partyId: string; email: string }>> {
-  const users = await prisma.user.findMany({
-    where: { status: "ACTIVE", role: "PARTICIPANT", partyId: { not: null } },
-    select: { partyId: true, email: true },
-    orderBy: { email: "asc" },
-  });
-  return users
-    .filter((user): user is { partyId: string; email: string } => Boolean(user.partyId))
-    .map((user) => ({ partyId: user.partyId, email: user.email }));
+  return listActiveParticipantUsers();
 }
 
 export {
