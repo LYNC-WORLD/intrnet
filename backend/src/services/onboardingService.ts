@@ -113,7 +113,7 @@ async function approveOnboardedUser(requestId: string, approverUserId: string, p
     console.log(rows[0]);
     const agreementId = rows[0].payload.agreementId;
     const agreementContractId = rows[0].contract_id;
-    adminService.approveOnboardingRequest({
+    await adminService.approveOnboardingRequest({
       requestId,
       approverUserId,
       partyHint,
