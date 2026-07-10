@@ -1,11 +1,9 @@
 import axios, { isAxiosError } from "axios";
 import {
-  getRegistryBaseUrl,
   getTokenConfig,
   getTokenStandardBaseUrl,
   resolveInstrumentAdmin,
 } from "../config/settlementToken";
-import { withProxyHostHeader } from "../http/proxyHeaders";
 
 export interface DisclosedContract {
   templateId: string;
@@ -44,18 +42,19 @@ function http(baseURL: string) {
   return axios.create({
     baseURL,
     timeout: registryHttp.timeout,
-    headers: withProxyHostHeader({ "Content-Type": "application/json" }),
+    headers: { "Content-Type": "application/json" },
   });
 }
 
-function wrapRegistryError(err: unknown, operation: string): Error {
+function wrapRegistryError(err: unknown, operation: string, baseURL?: string): Error {
   if (isAxiosError(err)) {
     const status = err.response?.status;
     const detail =
       typeof err.response?.data === "object" && err.response?.data !== null
         ? JSON.stringify(err.response.data)
         : err.message;
-    return new Error(`Registry ${operation} failed${status ? ` (${status})` : ""}: ${detail}`);
+    const target = baseURL ? ` at ${baseURL}` : "";
+    return new Error(`Registry ${operation} failed${target}${status ? ` (${status})` : ""}: ${detail}`);
   }
   return err instanceof Error ? err : new Error(`Registry ${operation} failed: ${String(err)}`);
 }
@@ -109,7 +108,7 @@ export async function getTransferFactory(
       disclosedContracts: normalizeDisclosed(data.choiceContext.disclosedContracts),
     };
   } catch (err) {
-    throw wrapRegistryError(err, "transfer-factory");
+    throw wrapRegistryError(err, "transfer-factory", getTokenStandardBaseUrl(admin));
   }
 }
 
@@ -118,7 +117,8 @@ export async function getTransferInstructionContext(
   action: "accept" | "reject" | "withdraw",
 ): Promise<ChoiceContext> {
   const admin = await resolveInstrumentAdmin();
-  const client = http(getTokenStandardBaseUrl(admin));
+  const baseURL = getTokenStandardBaseUrl(admin);
+  const client = http(baseURL);
   try {
     const res = await client.post(
       `/transfer-instruction/v1/${encodeURIComponent(transferInstructionId)}/choice-contexts/${action}`,
@@ -131,7 +131,7 @@ export async function getTransferInstructionContext(
       disclosedContracts: normalizeDisclosed(ctx.disclosedContracts),
     };
   } catch (err) {
-    throw wrapRegistryError(err, `transfer-instruction-${action}`);
+    throw wrapRegistryError(err, `transfer-instruction-${action}`, baseURL);
   }
 }
 
@@ -165,7 +165,7 @@ export async function listRegistryInstruments(): Promise<RegistryInstrument[]> {
     }
     return instruments;
   } catch (err) {
-    throw wrapRegistryError(err, "list-instruments");
+    throw wrapRegistryError(err, "list-instruments", getTokenStandardBaseUrl(admin));
   }
 }
 

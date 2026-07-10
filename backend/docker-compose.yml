@@ -15,6 +15,7 @@ services:
       - "host.docker.internal:host-gateway"
       - "json-ledger-api.localhost:host-gateway"
       - "grpc-ledger-api.localhost:host-gateway"
+      - "utility.localhost:host-gateway"
     depends_on:
       pqs:
         condition: service_started
@@ -29,6 +30,7 @@ services:
       - "host.docker.internal:host-gateway"
       - "json-ledger-api.localhost:host-gateway"
       - "grpc-ledger-api.localhost:host-gateway"
+      - "utility.localhost:host-gateway"
     command:
       - pipeline
       - ledger
