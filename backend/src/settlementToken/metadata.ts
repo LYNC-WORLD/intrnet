@@ -10,6 +10,7 @@ const REFERENCE_META_KEYS = [
   "utility.digitalasset.com/reference",
   "utility.digitalasset.com/depositor",
   "splice.lfdecentralizedtrust.org/reference",
+  "splice.lfdecentralizedtrust.org/reason",
 ];
 
 export function isPartyId(value: string): boolean {
@@ -85,7 +86,13 @@ export function parseReferenceFromMeta(meta: unknown): string | null {
   }
 
   for (const [key, candidate] of Object.entries(values)) {
-    if (!/reference|depositor|party|recipient/i.test(key) && !key.endsWith("/reference")) continue;
+    if (
+      !/reference|depositor|party|recipient|reason/i.test(key) &&
+      !key.endsWith("/reference") &&
+      !key.endsWith("/reason")
+    ) {
+      continue;
+    }
     if (typeof candidate === "string" && isPartyId(candidate)) {
       return candidate.trim();
     }
@@ -223,23 +230,4 @@ export function collectPartyIdsDeep(
   }
 
   return [...found];
-}
-
-export function summarizeInstructionPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const transfer = parseTransferRecord(payload);
-  const transferMeta = parseMetaValues(transfer?.meta);
-  const instructionMeta = parseMetaValues(payload.meta);
-  const exclude = new Set(
-    [transfer?.sender, transfer?.receiver].filter((value): value is string => typeof value === "string"),
-  );
-  return {
-    transferSender: transfer?.sender ?? null,
-    transferReceiver: transfer?.receiver ?? null,
-    transferAmount: transfer?.amount ?? null,
-    transferMetaKeys: Object.keys(transferMeta),
-    transferMetaSample: transferMeta,
-    instructionMetaKeys: Object.keys(instructionMeta),
-    instructionMetaSample: instructionMeta,
-    partyIdsFound: collectPartyIdsDeep(payload, exclude),
-  };
 }
