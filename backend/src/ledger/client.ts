@@ -7,6 +7,7 @@ import {
   qualifyTemplateId,
   templateSuffix,
   toLegacyEvents,
+  interfaceEventFormat,
   wildcardEventFormat,
 } from "./v2";
 import { withProxyHostHeader } from "../http/proxyHeaders";
@@ -324,6 +325,86 @@ export class LedgerClient {
     };
   }
 
+  private parseActiveContractEntry(item: Record<string, unknown>, interfaceId?: string) {
+    const entry = item.contractEntry as Record<string, unknown> | undefined;
+    const active = (entry?.JsActiveContract ?? entry?.ActiveContract) as Record<string, unknown> | undefined;
+    const created = active?.createdEvent as Record<string, unknown> | undefined;
+    if (!created) return null;
+
+    const payload =
+      (interfaceId ? this.parseInterfaceView(created, interfaceId) : null) ??
+      ((created.createArgument ?? {}) as Record<string, unknown>);
+
+    return {
+      contractId: created.contractId as string,
+      templateId: created.templateId as string,
+      payload,
+      createdEventBlob: (created.createdEventBlob as string) ?? null,
+      synchronizerId: (active?.synchronizerId as string) ?? null,
+    };
+  }
+
+  private parseInterfaceView(
+    created: Record<string, unknown>,
+    interfaceId: string,
+  ): Record<string, unknown> | null {
+    const views = created.interfaceViews;
+    if (!Array.isArray(views)) return null;
+
+    const normalizedTarget = interfaceId.replace(/^#/, "");
+    for (const view of views) {
+      const record = view as Record<string, unknown>;
+      const id = typeof record.interfaceId === "string" ? record.interfaceId : "";
+      if (!id) continue;
+      const normalizedId = id.replace(/^#/, "");
+      if (
+        normalizedId !== normalizedTarget &&
+        !normalizedId.endsWith(normalizedTarget) &&
+        !normalizedTarget.endsWith(normalizedId)
+      ) {
+        continue;
+      }
+      const viewValue = record.viewValue ?? record.view;
+      if (viewValue && typeof viewValue === "object") {
+        return viewValue as Record<string, unknown>;
+      }
+    }
+
+    if (views.length === 1) {
+      const viewValue = (views[0] as Record<string, unknown>).viewValue;
+      if (viewValue && typeof viewValue === "object") {
+        return viewValue as Record<string, unknown>;
+      }
+    }
+    return null;
+  }
+
+  async listInterfaceContracts(interfaceId: string, partyId?: string) {
+    const parties = partyId
+      ? [partyId]
+      : await this.resolveReadParties(await this.resolveParties());
+    const offset = await this.getLedgerEnd();
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/state/active-contracts", {
+        activeAtOffset: offset,
+        eventFormat: interfaceEventFormat(parties, interfaceId),
+      }),
+    );
+
+    const contracts: Array<{
+      contractId: string;
+      templateId: string;
+      payload: Record<string, unknown>;
+      createdEventBlob: string | null;
+      synchronizerId: string | null;
+    }> = [];
+    for (const item of res.data as Array<Record<string, unknown>>) {
+      const contract = this.parseActiveContractEntry(item, interfaceId);
+      if (contract) contracts.push(contract);
+    }
+    return contracts;
+  }
+
   async listActiveContractsRaw() {
     const parties = await this.resolveReadParties(await this.resolveParties());
     const offset = await this.getLedgerEnd();
@@ -349,17 +430,8 @@ export class LedgerClient {
       synchronizerId: string | null;
     }> = [];
     for (const item of res.data as Array<Record<string, unknown>>) {
-      const entry = item.contractEntry as Record<string, unknown> | undefined;
-      const active = (entry?.JsActiveContract ?? entry?.ActiveContract) as Record<string, unknown> | undefined;
-      const created = active?.createdEvent as Record<string, unknown> | undefined;
-      if (!created) continue;
-      contracts.push({
-        contractId: created.contractId as string,
-        templateId: created.templateId as string,
-        payload: (created.createArgument ?? {}) as Record<string, unknown>,
-        createdEventBlob: (created.createdEventBlob as string) ?? null,
-        synchronizerId: (active?.synchronizerId as string) ?? null,
-      });
+      const contract = this.parseActiveContractEntry(item);
+      if (contract) contracts.push(contract);
     }
     return contracts;
   }

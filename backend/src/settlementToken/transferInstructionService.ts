@@ -2,7 +2,6 @@ import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
   getTokenConfig,
-  isTransferInstructionContract,
   resolveInstrumentAdmin,
   TRANSFER_INSTRUCTION_INTERFACE_ID,
 } from "../config/settlementToken";
@@ -61,13 +60,28 @@ function parseTransferRecord(payload: Record<string, unknown>): Record<string, u
 
 function isPendingReceiverAcceptance(status: unknown): boolean {
   if (typeof status === "string") {
-    return status === "TransferPendingReceiverAcceptance";
+    return (
+      status === "TransferPendingReceiverAcceptance" ||
+      status === "Offered" ||
+      status === "PendingReceiverAcceptance"
+    );
   }
   if (status && typeof status === "object") {
     const record = status as Record<string, unknown>;
-    return record.tag === "TransferPendingReceiverAcceptance";
+    const tag = record.tag ?? record.constructor;
+    if (typeof tag === "string") {
+      return (
+        tag === "TransferPendingReceiverAcceptance" ||
+        tag === "Offered" ||
+        tag === "PendingReceiverAcceptance"
+      );
+    }
   }
   return false;
+}
+
+function shouldEnforceInstrumentAdmin(): boolean {
+  return Boolean(process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim());
 }
 
 export async function listPendingIncomingTransfers(
@@ -76,13 +90,15 @@ export async function listPendingIncomingTransfers(
   const receiver = receiverPartyId ?? (await getOperatorPartyId());
   const { instrumentId } = getTokenConfig();
   const expectedAdmin = await resolveInstrumentAdmin();
+  const enforceAdmin = shouldEnforceInstrumentAdmin();
   const client = await operatorClient();
-  const contracts = await client.listActiveContractsRaw();
+  const contracts = await client.listInterfaceContracts(
+    TRANSFER_INSTRUCTION_INTERFACE_ID,
+    receiver,
+  );
 
   const pending: PendingIncomingTransfer[] = [];
   for (const contract of contracts) {
-    if (!isTransferInstructionContract(contract.templateId)) continue;
-
     const payload = contract.payload;
     if (!isPendingReceiverAcceptance(payload.status)) continue;
 
@@ -95,7 +111,7 @@ export async function listPendingIncomingTransfers(
 
     const instrument = parseInstrument(transfer);
     if (!instrument || instrument.id !== instrumentId) continue;
-    if (instrument.admin && instrument.admin !== expectedAdmin) continue;
+    if (enforceAdmin && instrument.admin && instrument.admin !== expectedAdmin) continue;
 
     const sender = typeof transfer.sender === "string" ? transfer.sender : null;
     if (!sender || !PARTY_ID_PATTERN.test(sender)) continue;

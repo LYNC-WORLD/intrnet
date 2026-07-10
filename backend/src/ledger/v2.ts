@@ -63,6 +63,28 @@ export function wildcardEventFormat(parties: string[]) {
   return { filtersByParty };
 }
 
+export function interfaceEventFormat(parties: string[], interfaceId: string) {
+  const filtersByParty: Record<string, unknown> = {};
+  for (const party of parties) {
+    filtersByParty[party] = {
+      cumulative: [
+        {
+          identifierFilter: {
+            InterfaceFilter: {
+              value: {
+                interfaceId,
+                includeInterfaceView: true,
+                includeCreatedEventBlob: true,
+              },
+            },
+          },
+        },
+      ],
+    };
+  }
+  return { filtersByParty };
+}
+
 export function templateEventFormat(parties: string[], templateIds: string[], packageId: string) {
   const cumulative = templateIds.map((templateId) => ({
     identifierFilter: {

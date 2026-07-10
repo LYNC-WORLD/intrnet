@@ -1,8 +1,9 @@
 import { operatorClient } from "../ledger/client";
+import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
   getSettlementCurrency,
   getTokenConfig,
-  isHoldingContract,
+  HOLDING_INTERFACE_ID,
   resolveInstrumentAdmin,
 } from "../config/settlementToken";
 import { parsePositiveAmount } from "../utils/amount";
@@ -30,6 +31,18 @@ function parseDepositAttributionParty(payload: Record<string, unknown>): string 
     if (record.tag === "Some" && typeof record.value === "string") {
       const trimmed = record.value.trim();
       return PARTY_ID_PATTERN.test(trimmed) ? trimmed : null;
+    }
+  }
+
+  const meta = payload.meta;
+  if (meta && typeof meta === "object") {
+    const values = (meta as Record<string, unknown>).values;
+    if (values && typeof values === "object") {
+      const metaReference = (values as Record<string, unknown>).reference;
+      if (typeof metaReference === "string") {
+        const trimmed = metaReference.trim();
+        return PARTY_ID_PATTERN.test(trimmed) ? trimmed : null;
+      }
     }
   }
   return null;
@@ -62,29 +75,32 @@ function isLockedHolding(payload: Record<string, unknown>): boolean {
   return true;
 }
 
+function shouldEnforceInstrumentAdmin(): boolean {
+  return Boolean(process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim());
+}
+
 export async function listTokenHoldings(
   partyId?: string,
   opts: { includeLocked?: boolean } = {},
 ): Promise<TokenHolding[]> {
   const { instrumentId } = getTokenConfig();
   const expectedAdmin = await resolveInstrumentAdmin();
+  const enforceAdmin = shouldEnforceInstrumentAdmin();
   const client = await operatorClient();
-  const contracts = await client.listActiveContractsRaw();
+  const resolvedOwner = partyId ?? (await getOperatorPartyId());
+  const contracts = await client.listInterfaceContracts(HOLDING_INTERFACE_ID, resolvedOwner);
 
   const holdings: TokenHolding[] = [];
   for (const contract of contracts) {
-    if (!isHoldingContract(contract.templateId)) continue;
-
     const payload = contract.payload;
     const instrument = parseInstrument(payload);
     if (!instrument || instrument.id !== instrumentId) continue;
-    if (instrument.admin && instrument.admin !== expectedAdmin) continue;
+    if (enforceAdmin && instrument.admin && instrument.admin !== expectedAdmin) continue;
 
     const owner =
       (typeof payload.owner === "string" && payload.owner) ||
       (typeof payload.holder === "string" && payload.holder) ||
-      null;
-    if (!owner) continue;
+      resolvedOwner;
     if (partyId && owner !== partyId) continue;
 
     if (!opts.includeLocked && isLockedHolding(payload)) continue;
