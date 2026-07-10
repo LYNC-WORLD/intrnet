@@ -6,3 +6,7 @@ export const T = {
   NetPosition: "Intrnet.NetPosition:NetPosition",
   SettlementInstruction: "Intrnet.SettlementInstruction:SettlementInstruction",
 } as const;
+
+export function qualifiedTemplate(templateId: string, packageId: string): string {
+  return `${packageId}:${templateId}`;
+}

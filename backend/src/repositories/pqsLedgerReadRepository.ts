@@ -1,5 +1,5 @@
 import { pqs } from "../db/pqs";
-import { T } from "../ledger/templateIds";
+import { T, qualifiedTemplate } from "../ledger/templateIds";
 import {
   PqsAgreement,
   PqsFxRate,
@@ -197,7 +197,7 @@ export async function listAgreements(): Promise<PqsAgreement[]> {
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2
      ORDER BY payload->>'agreementId'`,
-    [T.NettingAgreement, packageId],
+    [qualifiedTemplate(T.NettingAgreement, packageId), packageId],
   );
   return rows.map(rowToAgreement);
 }
@@ -208,7 +208,7 @@ export async function getAgreementById(agreementId: string): Promise<PqsAgreemen
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND payload->>'agreementId' = $3
      LIMIT 1`,
-    [T.NettingAgreement, packageId, agreementId],
+    [qualifiedTemplate(T.NettingAgreement, packageId), packageId, agreementId],
   );
   return rows.length > 0 ? rowToAgreement(rows[0]) : null;
 }
@@ -219,7 +219,7 @@ export async function getAgreementContractId(agreementId: string): Promise<strin
     `SELECT contract_id FROM active($1)
      WHERE package_id = $2 AND payload->>'agreementId' = $3
      LIMIT 1`,
-    [T.NettingAgreement, packageId, agreementId],
+    [qualifiedTemplate(T.NettingAgreement, packageId), packageId, agreementId],
   );
   return rows.length > 0 ? (rows[0].contract_id as string) : null;
 }
@@ -240,7 +240,7 @@ async function findActiveObligationByKey(
        AND payload->>'agreementId' = $3
        AND payload->>'invoiceRef' = $4
      LIMIT 1`,
-    [T.Obligation, packageId, agreementId, invoiceRef],
+    [qualifiedTemplate(T.Obligation, packageId), packageId, agreementId, invoiceRef],
   );
   return rows.length > 0 ? rowToObligation(rows[0]) : null;
 }
@@ -251,7 +251,7 @@ export async function getObligation(contractId: string): Promise<PqsObligation |
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.Obligation, packageId, contractId],
+    [qualifiedTemplate(T.Obligation, packageId), packageId, contractId],
   );
   if (rows.length > 0) return rowToObligation(rows[0]);
   return getArchivedObligation(contractId);
@@ -265,7 +265,7 @@ export async function getArchivedObligation(contractId: string): Promise<PqsObli
      WHERE package_id = $2
        AND contract_id = $3
      LIMIT 1`,
-    [T.Obligation, packageId, contractId],
+    [qualifiedTemplate(T.Obligation, packageId), packageId, contractId],
   );
   if (rows.length === 0) return null;
 
@@ -309,11 +309,11 @@ async function listRejectedObligations(params: {
   const { conditions, args, nextIdx } = buildObligationFilterClauses({ ...params, status: "REJECTED" });
   conditions.push(`payload->>'status' = 'PENDING'`);
   const where = wherePkg(conditions);
-  const queryArgs = [T.Obligation, packageId, ...args, limit, offsetVal(page, limit)];
+  const queryArgs = [qualifiedTemplate(T.Obligation, packageId), packageId, ...args, limit, offsetVal(page, limit)];
 
   const countRes = await pqs.query(
     `SELECT COUNT(*) AS cnt FROM archives($1) ${where}`,
-    [T.Obligation, packageId, ...args],
+    [qualifiedTemplate(T.Obligation, packageId), packageId, ...args],
   );
   const total = parseInt(countRes.rows[0].cnt as string, 10);
 
@@ -356,11 +356,11 @@ export async function listObligations(params: {
   const { page, limit } = params;
   const { conditions, args, nextIdx } = buildObligationFilterClauses(params);
   const where = wherePkg(conditions);
-  const queryArgs = [T.Obligation, packageId, ...args, limit, offsetVal(page, limit)];
+  const queryArgs = [qualifiedTemplate(T.Obligation, packageId), packageId, ...args, limit, offsetVal(page, limit)];
 
   const countRes = await pqs.query(
     `SELECT COUNT(*) AS cnt FROM active($1) ${where}`,
-    [T.Obligation, packageId, ...args],
+    [qualifiedTemplate(T.Obligation, packageId), packageId, ...args],
   );
   const total = parseInt(countRes.rows[0].cnt as string, 10);
 
@@ -382,7 +382,7 @@ export async function listAcceptedObligations(agreementId: string): Promise<PqsO
      WHERE package_id = $2
        AND payload->>'agreementId' = $3
        AND payload->>'status' = 'ACCEPTED'`,
-    [T.Obligation, packageId, agreementId],
+    [qualifiedTemplate(T.Obligation, packageId), packageId, agreementId],
   );
   return rows.map((row) => rowToObligation(row));
 }
@@ -393,7 +393,7 @@ export async function getCycleByContractId(contractId: string): Promise<PqsNetti
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.NettingCycle, packageId, contractId],
+    [qualifiedTemplate(T.NettingCycle, packageId), packageId, contractId],
   );
   return rows.length > 0 ? rowToCycle(rows[0]) : null;
 }
@@ -413,7 +413,7 @@ export async function getCycleByCycleId(cycleId: string): Promise<PqsNettingCycl
   const { rows } = await pqs.query(
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND payload->>'cycleId' = $3`,
-    [T.NettingCycle, packageId, cycleId],
+    [qualifiedTemplate(T.NettingCycle, packageId), packageId, cycleId],
   );
   if (rows.length === 0) return null;
   const cycles = rows.map(rowToCycle);
@@ -429,7 +429,7 @@ export async function listCycles(params: {
   const { role, userAgreementId, agreementId } = params;
 
   const conditions: string[] = [];
-  const args: unknown[] = [T.NettingCycle, packageId];
+  const args: unknown[] = [qualifiedTemplate(T.NettingCycle, packageId), packageId];
   let idx = 3;
 
   if (role !== "operator" && userAgreementId) {
@@ -454,7 +454,7 @@ export async function listCycleIdsByAgreement(agreementId: string): Promise<stri
   const { rows } = await pqs.query(
     `SELECT payload->>'cycleId' AS cycle_id FROM active($1)
      WHERE package_id = $2 AND payload->>'agreementId' = $3`,
-    [T.NettingCycle, packageId, agreementId],
+    [qualifiedTemplate(T.NettingCycle, packageId), packageId, agreementId],
   );
   return rows.map((r: { cycle_id: string }) => r.cycle_id);
 }
@@ -465,7 +465,7 @@ export async function getPosition(contractId: string): Promise<PqsNetPosition | 
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.NetPosition, packageId, contractId],
+    [qualifiedTemplate(T.NetPosition, packageId), packageId, contractId],
   );
   return rows.length > 0 ? rowToPosition(rows[0]) : null;
 }
@@ -481,7 +481,7 @@ export async function listPositions(params: {
   const { partyId, role, cycleId, userAgreementId, agreementId } = params;
 
   const conditions: string[] = [];
-  const args: unknown[] = [T.NetPosition, packageId];
+  const args: unknown[] = [qualifiedTemplate(T.NetPosition, packageId), packageId];
   let idx = 3;
 
   if (role !== "operator") {
@@ -504,7 +504,7 @@ export async function listPositions(params: {
          WHERE package_id = $${cyclePackageArg} AND payload->>'agreementId' = $${agreementArg}
        )`,
     );
-    args.push(T.NettingCycle, packageId, filterAgreementId);
+    args.push(qualifiedTemplate(T.NettingCycle, packageId), packageId, filterAgreementId);
   }
 
   const where = wherePkg(conditions);
@@ -520,7 +520,7 @@ export async function getActivePositionsForCycle(
   status?: string,
 ): Promise<PqsNetPosition[]> {
   const packageId = pkg();
-  const args: unknown[] = [T.NetPosition, packageId, cycleId];
+  const args: unknown[] = [qualifiedTemplate(T.NetPosition, packageId), packageId, cycleId];
   let statusClause = "";
   if (status) {
     statusClause = `AND payload->>'status' = $4`;
@@ -540,7 +540,7 @@ export async function getInstruction(contractId: string): Promise<PqsSettlementI
     `SELECT contract_id, payload, created_effective_at FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.SettlementInstruction, packageId, contractId],
+    [qualifiedTemplate(T.SettlementInstruction, packageId), packageId, contractId],
   );
   return rows.length > 0 ? rowToInstruction(rows[0]) : null;
 }
@@ -558,7 +558,7 @@ export async function listSettlementInstructions(params: {
   }
 
   const conditions: string[] = [];
-  const args: unknown[] = [T.SettlementInstruction, packageId];
+  const args: unknown[] = [qualifiedTemplate(T.SettlementInstruction, packageId), packageId];
   let idx = 3;
 
   if (cycleIds && cycleIds.length > 0) {
@@ -586,7 +586,7 @@ export async function getActiveInstructionsForCycle(cycleId: string): Promise<Pq
   const { rows } = await pqs.query(
     `SELECT contract_id, payload, created_effective_at FROM active($1)
      WHERE package_id = $2 AND payload->>'cycleId' = $3`,
-    [T.SettlementInstruction, packageId, cycleId],
+    [qualifiedTemplate(T.SettlementInstruction, packageId), packageId, cycleId],
   );
   return rows.map(rowToInstruction);
 }
@@ -594,7 +594,7 @@ export async function getActiveInstructionsForCycle(cycleId: string): Promise<Pq
 export async function listFxRates(fromCurrency?: string, toCurrency?: string): Promise<PqsFxRate[]> {
   const packageId = pkg();
   const conditions: string[] = [];
-  const args: unknown[] = [T.FxRateOracle, packageId];
+  const args: unknown[] = [qualifiedTemplate(T.FxRateOracle, packageId), packageId];
   let idx = 3;
 
   if (fromCurrency) {
@@ -628,10 +628,10 @@ export async function pqsHealthCheck(): Promise<{
     const packageId = pkg();
     const countSql = `SELECT COUNT(*) AS cnt FROM active($1) WHERE package_id = $2`;
     const [agreements, cycles, obligations, instructions] = await Promise.all([
-      pqs.query(countSql, [T.NettingAgreement, packageId]),
-      pqs.query(countSql, [T.NettingCycle, packageId]),
-      pqs.query(countSql, [T.Obligation, packageId]),
-      pqs.query(countSql, [T.SettlementInstruction, packageId]),
+      pqs.query(countSql, [qualifiedTemplate(T.NettingAgreement, packageId), packageId]),
+      pqs.query(countSql, [qualifiedTemplate(T.NettingCycle, packageId), packageId]),
+      pqs.query(countSql, [qualifiedTemplate(T.Obligation, packageId), packageId]),
+      pqs.query(countSql, [qualifiedTemplate(T.SettlementInstruction, packageId), packageId]),
     ]);
     return {
       connected: true,
