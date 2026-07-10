@@ -113,6 +113,28 @@ export async function getTransferFactory(
   }
 }
 
+export async function getTransferInstructionContext(
+  transferInstructionId: string,
+  action: "accept" | "reject" | "withdraw",
+): Promise<ChoiceContext> {
+  const admin = await resolveInstrumentAdmin();
+  const client = http(getTokenStandardBaseUrl(admin));
+  try {
+    const res = await client.post(
+      `/transfer-instruction/v1/${encodeURIComponent(transferInstructionId)}/choice-contexts/${action}`,
+      { meta: {}, excludeDebugFields: true },
+    );
+    const data = res.data as { choiceContext?: ChoiceContext } & ChoiceContext;
+    const ctx = data.choiceContext ?? data;
+    return {
+      choiceContextData: ctx.choiceContextData ?? {},
+      disclosedContracts: normalizeDisclosed(ctx.disclosedContracts),
+    };
+  } catch (err) {
+    throw wrapRegistryError(err, `transfer-instruction-${action}`);
+  }
+}
+
 export async function listRegistryInstruments(): Promise<RegistryInstrument[]> {
   const admin = await resolveInstrumentAdmin();
   const client = http(getTokenStandardBaseUrl(admin));

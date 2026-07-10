@@ -1,11 +1,19 @@
 import { prisma } from "../db";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { listTokenHoldings } from "./holdingsService";
+import { acceptPendingIncomingTransfers } from "./transferInstructionService";
 import { creditDeposit, sumRecordedDepositCredits } from "../services/balanceService";
 import { getSettlementCurrency } from "../config/settlementToken";
 
 export interface DepositReconcileResult {
   custodyParty: string;
+  transfersAccepted: Array<{
+    contractId: string;
+    sender: string;
+    amount: number;
+    updateId: string | null;
+  }>;
+  transfersFailed: Array<{ contractId: string; error: string }>;
   onChainCustodyTotal: number;
   recordedDepositCreditsTotal: number;
   unattributedOnChainTotal: number;
@@ -18,6 +26,9 @@ export interface DepositReconcileResult {
 
 export async function reconcileDeposits(createdBy?: string): Promise<DepositReconcileResult> {
   const custodyParty = await getOperatorPartyId();
+  const { accepted: transfersAccepted, failed: transfersFailed } =
+    await acceptPendingIncomingTransfers(custodyParty);
+
   const holdings = await listTokenHoldings(custodyParty);
   const currency = getSettlementCurrency();
 
@@ -74,6 +85,8 @@ export async function reconcileDeposits(createdBy?: string): Promise<DepositReco
 
   return {
     custodyParty,
+    transfersAccepted,
+    transfersFailed,
     onChainCustodyTotal,
     recordedDepositCreditsTotal,
     unattributedOnChainTotal,

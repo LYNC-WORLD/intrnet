@@ -14,6 +14,8 @@ export const HOLDING_INTERFACE_ID =
   "#splice-api-token-holding-v1:Splice.Api.Token.HoldingV1:Holding";
 export const TRANSFER_FACTORY_INTERFACE_ID =
   "#splice-api-token-transfer-instruction-v1:Splice.Api.Token.TransferInstructionV1:TransferFactory";
+export const TRANSFER_INSTRUCTION_INTERFACE_ID =
+  "#splice-api-token-transfer-instruction-v1:Splice.Api.Token.TransferInstructionV1:TransferInstruction";
 
 function backendUrl(): string {
   return (process.env.UTILITY_BACKEND_URL ?? "https://api.utilities.digitalasset-dev.com").replace(
@@ -94,4 +96,8 @@ export async function resolveInstrumentAdmin(): Promise<string> {
 
 export function isHoldingContract(templateId: string): boolean {
   return templateId.includes("HoldingV1:Holding");
+}
+
+export function isTransferInstructionContract(templateId: string): boolean {
+  return templateId.includes("TransferInstructionV1:TransferInstruction");
 }

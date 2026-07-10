@@ -238,11 +238,11 @@ export const openApiSpec = {
     "/api/admin/deposits/sync": {
       post: {
         tags: ["Admin"],
-        summary: "Reconcile inbound tUSD custody deposits and credit balances (operator)",
+        summary: "Accept pending tUSD transfers and reconcile custody deposits (operator)",
         description:
-          "Scans the operator custody party's tUSD holdings, idempotently credits holdings whose " +
-          "transfer reference is a depositor party id (Canton Registry Offer Transfer Reference field), " +
-          "and reports drift vs recorded balances.",
+          "Accepts pending CIP-56 TransferInstruction contracts addressed to the operator custody party, " +
+          "then scans custody tUSD holdings and idempotently credits holdings whose transfer reference " +
+          "is a depositor party id (Canton Registry Offer Transfer Reference field).",
         security: [{ bearerAuth: [] }],
         responses: {
           "200": { description: "Reconciliation report", content: json({ type: "object" }) },
