@@ -7,6 +7,7 @@ import {
   resolveInstrumentAdmin,
 } from "../config/settlementToken";
 import { parsePositiveAmount } from "../utils/amount";
+import { parseDepositAttributionParty } from "./metadata";
 
 export interface TokenHolding {
   contractId: string;
@@ -16,36 +17,6 @@ export interface TokenHolding {
   instrumentAdmin: string | null;
   createdEventBlob: string | null;
   attributedParty: string | null;
-}
-
-const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
-
-function parseDepositAttributionParty(payload: Record<string, unknown>): string | null {
-  const reference = payload.reference;
-  if (typeof reference === "string") {
-    const trimmed = reference.trim();
-    return PARTY_ID_PATTERN.test(trimmed) ? trimmed : null;
-  }
-  if (reference && typeof reference === "object") {
-    const record = reference as Record<string, unknown>;
-    if (record.tag === "Some" && typeof record.value === "string") {
-      const trimmed = record.value.trim();
-      return PARTY_ID_PATTERN.test(trimmed) ? trimmed : null;
-    }
-  }
-
-  const meta = payload.meta;
-  if (meta && typeof meta === "object") {
-    const values = (meta as Record<string, unknown>).values;
-    if (values && typeof values === "object") {
-      const metaReference = (values as Record<string, unknown>).reference;
-      if (typeof metaReference === "string") {
-        const trimmed = metaReference.trim();
-        return PARTY_ID_PATTERN.test(trimmed) ? trimmed : null;
-      }
-    }
-  }
-  return null;
 }
 
 function parseInstrument(payload: Record<string, unknown>): { id: string; admin: string | null } | null {

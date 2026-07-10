@@ -474,6 +474,84 @@ export class LedgerClient {
     };
   }
 
+  async fetchInterfaceById(contractId: string, interfaceId: string) {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() => this.http.post("/v2/events/events-by-contract-id", {
+      contractId,
+      eventFormat: interfaceEventFormat(parties, interfaceId),
+    }));
+
+    const created = res.data.created?.createdEvent as Record<string, unknown> | undefined;
+    if (!created) return null;
+
+    const payload =
+      this.parseInterfaceView(created, interfaceId) ??
+      ((created.createArgument ?? {}) as Record<string, unknown>);
+
+    return {
+      contractId: created.contractId as string,
+      payload,
+    };
+  }
+
+  async fetchContractLifecycle(contractId: string): Promise<{
+    created: { offset: number | null; payload: Record<string, unknown> } | null;
+    archived: { offset: number | null } | null;
+  } | null> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() => this.http.post("/v2/events/events-by-contract-id", {
+      contractId,
+      eventFormat: wildcardEventFormat(parties),
+    }));
+
+    const data = res.data as Record<string, unknown>;
+    const createdBlock = data.created as Record<string, unknown> | undefined;
+    const archivedBlock = data.archived as Record<string, unknown> | undefined;
+    if (!createdBlock && !archivedBlock) return null;
+
+    const createdEvent = createdBlock?.createdEvent as Record<string, unknown> | undefined;
+    const archivedEvent = archivedBlock?.archivedEvent as Record<string, unknown> | undefined;
+
+    return {
+      created: createdEvent
+        ? {
+            offset: typeof createdBlock?.offset === "number" ? createdBlock.offset : null,
+            payload: (createdEvent.createArgument ?? {}) as Record<string, unknown>,
+          }
+        : null,
+      archived: archivedEvent
+        ? {
+            offset: typeof archivedBlock?.offset === "number" ? archivedBlock.offset : null,
+          }
+        : null,
+    };
+  }
+
+  async fetchTransactionEventsAtOffset(offset: number): Promise<Array<Record<string, unknown>>> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/updates", {
+        beginExclusive: Math.max(0, offset - 1),
+        endInclusive: offset,
+        updateFormat: {
+          includeTransactions: {
+            eventFormat: wildcardEventFormat(parties),
+            transactionShape: "TRANSACTION_SHAPE_LEDGER_EFFECTS",
+          },
+        },
+      }),
+    );
+
+    const events: Array<Record<string, unknown>> = [];
+    for (const item of res.data as Array<Record<string, unknown>>) {
+      const update = item.update as Record<string, unknown> | undefined;
+      const transaction = update?.Transaction as { value?: { events?: Array<Record<string, unknown>> } } | undefined;
+      const txEvents = transaction?.value?.events;
+      if (Array.isArray(txEvents)) events.push(...txEvents);
+    }
+    return events;
+  }
+
   async allocateParty(partyIdHint: string) {
     const existing = await this.findPartyByHint(partyIdHint);
     if (existing) return { partyId: existing };

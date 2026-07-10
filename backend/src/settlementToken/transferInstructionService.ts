@@ -5,7 +5,9 @@ import {
   resolveInstrumentAdmin,
   TRANSFER_INSTRUCTION_INTERFACE_ID,
 } from "../config/settlementToken";
+import { ExerciseEvents, matchesTemplate } from "../ledger/v2";
 import { parsePositiveAmount } from "../utils/amount";
+import { parseTransferDepositorParty } from "./metadata";
 import { DisclosedContract, getTransferInstructionContext } from "./registryClient";
 
 export interface PendingIncomingTransfer {
@@ -14,15 +16,20 @@ export interface PendingIncomingTransfer {
   receiver: string;
   amount: number;
   instrumentId: string;
+  depositorPartyId: string | null;
+}
+
+export interface AcceptedIncomingTransfer {
+  contractId: string;
+  sender: string;
+  amount: number;
+  updateId: string | null;
+  depositorPartyId: string | null;
+  receiverHoldingCids: string[];
 }
 
 export interface AcceptTransfersResult {
-  accepted: Array<{
-    contractId: string;
-    sender: string;
-    amount: number;
-    updateId: string | null;
-  }>;
+  accepted: AcceptedIncomingTransfer[];
   failed: Array<{ contractId: string; error: string }>;
 }
 
@@ -84,6 +91,35 @@ function shouldEnforceInstrumentAdmin(): boolean {
   return Boolean(process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim());
 }
 
+function extractReceiverHoldingCids(
+  exerciseResult: unknown,
+  events: ExerciseEvents,
+): string[] {
+  const cids = new Set<string>();
+
+  const scan = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    const direct = record.receiverHoldingCids;
+    if (Array.isArray(direct)) {
+      for (const cid of direct) {
+        if (typeof cid === "string" && cid.trim()) cids.add(cid.trim());
+      }
+    }
+    if (record.output) scan(record.output);
+    if (record.value) scan(record.value);
+  };
+  scan(exerciseResult);
+
+  for (const event of events) {
+    if (event.created && matchesTemplate(event.created.templateId, "HoldingV1:Holding")) {
+      cids.add(event.created.contractId);
+    }
+  }
+
+  return [...cids];
+}
+
 export async function listPendingIncomingTransfers(
   receiverPartyId?: string,
 ): Promise<PendingIncomingTransfer[]> {
@@ -125,18 +161,21 @@ export async function listPendingIncomingTransfers(
       receiver: transferReceiver,
       amount,
       instrumentId: instrument.id,
+      depositorPartyId: parseTransferDepositorParty(transfer),
     });
   }
 
   return pending;
 }
 
-export async function acceptIncomingTransfer(contractId: string): Promise<string | null> {
-  const context = await getTransferInstructionContext(contractId, "accept");
+export async function acceptIncomingTransfer(
+  instruction: PendingIncomingTransfer,
+): Promise<AcceptedIncomingTransfer> {
+  const context = await getTransferInstructionContext(instruction.contractId, "accept");
   const client = await operatorClient();
   const result = await client.exerciseWithDisclosed({
     templateId: TRANSFER_INSTRUCTION_INTERFACE_ID,
-    contractId,
+    contractId: instruction.contractId,
     choice: "TransferInstruction_Accept",
     argument: {
       extraArgs: {
@@ -146,7 +185,15 @@ export async function acceptIncomingTransfer(contractId: string): Promise<string
     },
     disclosedContracts: toLedgerDisclosed(context.disclosedContracts),
   });
-  return result.updateId;
+
+  return {
+    contractId: instruction.contractId,
+    sender: instruction.sender,
+    amount: instruction.amount,
+    updateId: result.updateId,
+    depositorPartyId: instruction.depositorPartyId,
+    receiverHoldingCids: extractReceiverHoldingCids(result.exerciseResult, result.events),
+  };
 }
 
 export async function acceptPendingIncomingTransfers(
@@ -158,13 +205,7 @@ export async function acceptPendingIncomingTransfers(
 
   for (const instruction of pending) {
     try {
-      const updateId = await acceptIncomingTransfer(instruction.contractId);
-      accepted.push({
-        contractId: instruction.contractId,
-        sender: instruction.sender,
-        amount: instruction.amount,
-        updateId,
-      });
+      accepted.push(await acceptIncomingTransfer(instruction));
     } catch (err) {
       failed.push({
         contractId: instruction.contractId,

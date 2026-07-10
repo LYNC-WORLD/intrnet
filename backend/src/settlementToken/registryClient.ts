@@ -4,8 +4,6 @@ import {
   getTokenStandardBaseUrl,
   resolveInstrumentAdmin,
 } from "../config/settlementToken";
-import { utilityRequestHeaders } from "../http/proxyHeaders";
-
 export interface DisclosedContract {
   templateId: string;
   contractId: string;
@@ -43,7 +41,7 @@ function http(baseURL: string) {
   return axios.create({
     baseURL,
     timeout: registryHttp.timeout,
-    headers: utilityRequestHeaders(),
+    headers: { "Content-Type": "application/json" },
   });
 }
 
