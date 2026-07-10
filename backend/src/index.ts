@@ -10,7 +10,6 @@ import referenceRouter from "./routes/reference";
 import fxRatesRouter from "./routes/fxRates";
 import agreementsRouter from "./routes/agreements";
 import settlementRouter from "./routes/settlement";
-import operatorRouter from "./routes/operator";
 import onboardingRouter from "./routes/onboarding";
 import docsRouter from "./routes/docs";
 import { operatorClient } from "./ledger/client";
@@ -46,7 +45,6 @@ app.use("/api", referenceRouter);
 app.use("/api/fx-rates", fxRatesRouter);
 app.use("/api/agreements", agreementsRouter);
 app.use("/api/settlement", settlementRouter);
-app.use("/api/operator", operatorRouter);
 app.use("/api/docs", docsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

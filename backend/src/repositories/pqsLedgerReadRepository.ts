@@ -2,13 +2,32 @@ import { pqs } from "../db/pqs";
 import { T } from "../ledger/templateIds";
 import {
   PqsAgreement,
-  PqsCashAccount,
   PqsFxRate,
   PqsNettingCycle,
   PqsNetPosition,
   PqsObligation,
   PqsSettlementInstruction,
 } from "../types/ledger";
+
+function parseOptionalText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.tag === "Some" && typeof record.value === "string") return record.value;
+    if (record.tag === "None") return null;
+  }
+  return null;
+}
+
+function parsePayloadAmount(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
 
 function pkg(): string {
   const id = process.env.INTRNET_PACKAGE_ID?.trim();
@@ -144,28 +163,20 @@ function rowToPosition(row: { contract_id: string; payload: Record<string, unkno
 function rowToInstruction(row: {
   contract_id: string;
   payload: Record<string, unknown>;
+  created_effective_at?: Date | string;
 }): PqsSettlementInstruction {
   const p = row.payload;
   return {
     contractId: row.contract_id,
     payer: p.payer as string,
     receiver: p.receiver as string,
-    amount: parseFloat(p.amount as string),
+    amount: parsePayloadAmount(p.amount),
     currency: p.currency as string,
     cycleId: p.cycleId as string,
     status: p.status as string,
-    failureReason: p.failureReason ? String(p.failureReason) : null,
-    createdAt: new Date(),
-  };
-}
-
-function rowToCashAccount(row: { contract_id: string; payload: Record<string, unknown> }): PqsCashAccount {
-  const p = row.payload;
-  return {
-    contractId: row.contract_id,
-    owner: p.owner as string,
-    currency: p.currency as string,
-    balance: parseFloat(p.balance as string),
+    paymentReference: parseOptionalText(p.paymentReference),
+    failureReason: parseOptionalText(p.failureReason),
+    createdAt: row.created_effective_at ? new Date(row.created_effective_at) : new Date(0),
   };
 }
 
@@ -526,7 +537,7 @@ export async function getActivePositionsForCycle(
 export async function getInstruction(contractId: string): Promise<PqsSettlementInstruction | null> {
   const packageId = pkg();
   const { rows } = await pqs.query(
-    `SELECT contract_id, payload FROM active($1)
+    `SELECT contract_id, payload, created_effective_at FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
     [T.SettlementInstruction, packageId, contractId],
@@ -541,6 +552,10 @@ export async function listSettlementInstructions(params: {
 }): Promise<PqsSettlementInstruction[]> {
   const packageId = pkg();
   const { role, partyId, cycleIds } = params;
+
+  if (cycleIds && cycleIds.length === 0) {
+    return [];
+  }
 
   const conditions: string[] = [];
   const args: unknown[] = [T.SettlementInstruction, packageId];
@@ -559,8 +574,8 @@ export async function listSettlementInstructions(params: {
 
   const where = wherePkg(conditions);
   const { rows } = await pqs.query(
-    `SELECT contract_id, payload FROM active($1) ${where}
-     ORDER BY payload->>'createdAt' DESC`,
+    `SELECT contract_id, payload, created_effective_at FROM active($1) ${where}
+     ORDER BY created_effective_at DESC`,
     args,
   );
   return rows.map(rowToInstruction);
@@ -569,38 +584,11 @@ export async function listSettlementInstructions(params: {
 export async function getActiveInstructionsForCycle(cycleId: string): Promise<PqsSettlementInstruction[]> {
   const packageId = pkg();
   const { rows } = await pqs.query(
-    `SELECT contract_id, payload FROM active($1)
+    `SELECT contract_id, payload, created_effective_at FROM active($1)
      WHERE package_id = $2 AND payload->>'cycleId' = $3`,
     [T.SettlementInstruction, packageId, cycleId],
   );
   return rows.map(rowToInstruction);
-}
-
-export async function getCashAccount(owner: string, currency: string): Promise<PqsCashAccount | null> {
-  const packageId = pkg();
-  const { rows } = await pqs.query(
-    `SELECT contract_id, payload FROM active($1)
-     WHERE package_id = $2 AND payload->>'owner' = $3 AND payload->>'currency' = $4
-     LIMIT 1`,
-    [T.CashAccount, packageId, owner, currency],
-  );
-  return rows.length > 0 ? rowToCashAccount(rows[0]) : null;
-}
-
-export async function listCashAccounts(owner?: string): Promise<PqsCashAccount[]> {
-  const packageId = pkg();
-  const args: unknown[] = [T.CashAccount, packageId];
-  const where = owner
-    ? `WHERE package_id = $2 AND payload->>'owner' = $3`
-    : "WHERE package_id = $2";
-  if (owner) args.push(owner);
-
-  const { rows } = await pqs.query(
-    `SELECT contract_id, payload FROM active($1) ${where}
-     ORDER BY payload->>'owner', payload->>'currency'`,
-    args,
-  );
-  return rows.map(rowToCashAccount);
 }
 
 export async function listFxRates(fromCurrency?: string, toCurrency?: string): Promise<PqsFxRate[]> {
@@ -632,18 +620,18 @@ export async function pqsHealthCheck(): Promise<{
   agreementCount: number;
   cycleCount: number;
   obligationCount: number;
-  cashAccountCount: number;
+  settlementInstructionCount: number;
   packageId?: string;
   error?: string;
 }> {
   try {
     const packageId = pkg();
     const countSql = `SELECT COUNT(*) AS cnt FROM active($1) WHERE package_id = $2`;
-    const [agreements, cycles, obligations, accounts] = await Promise.all([
+    const [agreements, cycles, obligations, instructions] = await Promise.all([
       pqs.query(countSql, [T.NettingAgreement, packageId]),
       pqs.query(countSql, [T.NettingCycle, packageId]),
       pqs.query(countSql, [T.Obligation, packageId]),
-      pqs.query(countSql, [T.CashAccount, packageId]),
+      pqs.query(countSql, [T.SettlementInstruction, packageId]),
     ]);
     return {
       connected: true,
@@ -651,7 +639,7 @@ export async function pqsHealthCheck(): Promise<{
       agreementCount: parseInt(agreements.rows[0].cnt as string, 10),
       cycleCount: parseInt(cycles.rows[0].cnt as string, 10),
       obligationCount: parseInt(obligations.rows[0].cnt as string, 10),
-      cashAccountCount: parseInt(accounts.rows[0].cnt as string, 10),
+      settlementInstructionCount: parseInt(instructions.rows[0].cnt as string, 10),
     };
   } catch (err) {
     return {
@@ -659,7 +647,7 @@ export async function pqsHealthCheck(): Promise<{
       agreementCount: 0,
       cycleCount: 0,
       obligationCount: 0,
-      cashAccountCount: 0,
+      settlementInstructionCount: 0,
       error: err instanceof Error ? err.message : String(err),
     };
   }

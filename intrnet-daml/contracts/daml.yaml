@@ -1,5 +1,5 @@
-name: intrnet-contracts
-version: 0.0.3
+name: intrnet-contracts-tusd
+version: 0.0.1
 source: daml
 dependencies:
   - daml-prim

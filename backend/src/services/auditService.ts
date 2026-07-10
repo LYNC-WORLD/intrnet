@@ -17,7 +17,6 @@ export function mapCreatedEventType(templateId: string, payload: Record<string, 
     return "Settlement Instruction Created";
   }
   if (templateId.includes("FxRateOracle")) return "FX Rate Updated";
-  if (templateId.includes("CashAccount")) return "Cash Account Updated";
   if (templateId.includes("NettingAgreement")) return "Agreement Updated";
   return "Contract Created";
 }
@@ -28,6 +27,9 @@ export function mapExerciseEventType(templateId: string, choice: string): string
   if (templateId.includes("SettlementInstruction") && choice === "ConfirmReceipt") {
     return "Settlement Confirmed";
   }
+  if (templateId.includes("SettlementInstruction") && choice === "AttestPayment") {
+    return "Settlement Executed";
+  }
   if (templateId.includes("NettingCycle")) {
     if (choice === "SettleCycle") return "Cycle Settled";
     if (choice === "ForceSettleCycle") return "Cycle Force Settled";
@@ -35,8 +37,7 @@ export function mapExerciseEventType(templateId: string, choice: string): string
     if (choice === "ComputeNetPositions") return "Net Positions Computed";
     if (choice === "AddObligation") return "Obligation Added To Cycle";
   }
-  if (templateId.includes("CashAccount") && choice === "Credit") return "Cash Account Credited";
-  if (templateId.includes("CashAccount") && choice === "Debit") return "Cash Account Debited";
+  if (templateId.includes("SettlementInstruction") && choice === "FailPayment") return "Settlement Failed";
   if (templateId.includes("NettingAgreement") && choice === "AddParticipant") return "Participant Added";
   if (templateId.includes("NettingAgreement") && choice === "StartNettingCycle") return "Cycle Opened";
   if (templateId.includes("FxRateOracle") && choice === "UpdateRate") return "FX Rate Updated";

@@ -29,7 +29,6 @@ export const openApiSpec = {
     { name: "Cycles" },
     { name: "Positions" },
     { name: "Settlement" },
-    { name: "Operator" },
     { name: "Health" },
   ],
   components: openApiComponents,
@@ -230,6 +229,36 @@ export const openApiSpec = {
             description: "Request rejected",
             content: json(routeResponseSchemas.rejectOnboarding),
           },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/api/admin/deposits/sync": {
+      post: {
+        tags: ["Admin"],
+        summary: "Reconcile inbound tUSD custody deposits and credit balances (operator)",
+        description:
+          "Scans the operator custody party's tUSD holdings, idempotently credits holdings whose " +
+          "transfer reference is a depositor party id (Canton Registry Offer Transfer Reference field), " +
+          "and reports drift vs recorded balances.",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": { description: "Reconciliation report", content: json({ type: "object" }) },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/api/admin/instruments": {
+      get: {
+        tags: ["Admin"],
+        summary: "Discover tUSD registry instruments + admin party (operator)",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": { description: "Registry instruments and discovered admin", content: json({ type: "object" }) },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "403": { $ref: "#/components/responses/Forbidden" },
@@ -757,15 +786,29 @@ export const openApiSpec = {
         },
       },
     },
-    "/api/settlement/accounts": {
+    "/api/settlement/balance": {
       get: {
         tags: ["Settlement"],
-        summary: "List cash accounts",
+        summary: "Get tUSD settlement balance for current party",
         security: [{ bearerAuth: [] }],
         responses: {
           "200": {
-            description: "Cash accounts visible to the user",
-            content: json(routeResponseSchemas.cashAccountList),
+            description: "Party balance with optional Canton Holdings total",
+            content: json(routeResponseSchemas.partyBalance),
+          },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/api/settlement/balances": {
+      get: {
+        tags: ["Settlement"],
+        summary: "List tUSD settlement balances",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "Balances visible to the user (operator sees all)",
+            content: json(routeResponseSchemas.partyBalanceList),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
         },
@@ -774,12 +817,38 @@ export const openApiSpec = {
     "/api/settlement/{contractId}/execute": {
       post: {
         tags: ["Settlement"],
-        summary: "Execute settlement instruction (operator)",
+        summary: "Execute settlement with automatic CIP-56 custody payout (operator)",
+        description:
+          "Reserves the payer balance, transfers real settlement tokens from operator custody to the " +
+          "receiver via the CIP-56 TransferFactory, attests the Canton updateId on the settlement " +
+          "instruction, and debits the payer's reserved balance.",
         security: [{ bearerAuth: [] }],
         parameters: [{ name: "contractId", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": {
-            description: "Funds transferred on ledger",
+            description: "Real token payout completed and settlement attested on ledger",
+            content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/api/settlement/{contractId}/fail": {
+      post: {
+        tags: ["Settlement"],
+        summary: "Mark a PENDING settlement instruction as FAILED (operator)",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "contractId", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: false,
+          content: json({ $ref: "#/components/schemas/FailSettlementRequest" }),
+        },
+        responses: {
+          "200": {
+            description: "Instruction marked FAILED; reserved funds released",
             content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
           },
           "400": { $ref: "#/components/responses/BadRequest" },
@@ -804,28 +873,6 @@ export const openApiSpec = {
           "403": { $ref: "#/components/responses/Forbidden" },
           "404": { $ref: "#/components/responses/NotFound" },
           "401": { $ref: "#/components/responses/Unauthorized" },
-        },
-      },
-    },
-    "/api/operator/fund-account": {
-      post: {
-        tags: ["Operator"],
-        summary: "Fund a participant cash account (operator)",
-        security: [{ bearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: json({ $ref: "#/components/schemas/FundAccountRequest" }),
-        },
-        responses: {
-          "200": {
-            description: "Account credited",
-            content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
-          },
-          "400": { $ref: "#/components/responses/BadRequest" },
-          "404": { $ref: "#/components/responses/NotFound" },
-          "409": { $ref: "#/components/responses/Conflict" },
-          "401": { $ref: "#/components/responses/Unauthorized" },
-          "403": { $ref: "#/components/responses/Forbidden" },
         },
       },
     },

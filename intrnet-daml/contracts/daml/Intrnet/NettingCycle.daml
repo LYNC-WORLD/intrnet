@@ -115,6 +115,8 @@ template NettingCycle
             cycleId
             operator
             status = "PENDING"
+            paymentReference = None
+            failureReason = None
 
         create this with
           positionCids = positionCids
@@ -158,6 +160,8 @@ template NettingCycle
             cycleId
             operator
             status = "PENDING"
+            paymentReference = None
+            failureReason = None
 
         create this with
           positionCids = positionCids

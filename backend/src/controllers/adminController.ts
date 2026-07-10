@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import * as adminService from "../services/adminService";
 import { pqsHealthCheck } from "../repositories/pqsLedgerReadRepository";
 import { asyncHandler } from "../utils/asyncHandler";
+import { reconcileDeposits } from "../settlementToken/depositIndexer";
+import { discoverInstrumentAdmin, listRegistryInstruments } from "../settlementToken/registryClient";
 
 export const listCompanies = asyncHandler(async (req: Request, res: Response) => {
   const { agreementId } = req.query as Record<string, string | undefined>;
@@ -29,11 +31,10 @@ export const getOnboardingRequest = asyncHandler(async (req: Request, res: Respo
 
 export const approveOnboardingRequest = asyncHandler(async (req: Request, res: Response) => {
   const requestId = String(req.params.id ?? "");
-  const { partyHint, agreementId, agreementContractId, initialBalance } = req.body as {
+  const { partyHint, agreementId, agreementContractId } = req.body as {
     partyHint?: string;
     agreementId?: string;
     agreementContractId?: string;
-    initialBalance?: string;
   };
   const result = await adminService.approveOnboardingRequest({
     requestId,
@@ -41,7 +42,6 @@ export const approveOnboardingRequest = asyncHandler(async (req: Request, res: R
     partyHint,
     agreementId,
     agreementContractId,
-    initialBalance,
   });
   return res.json({ success: true, data: result });
 });
@@ -52,6 +52,19 @@ export const rejectOnboarding = asyncHandler(async (req: Request, res: Response)
   if (!reason) return res.status(400).json({ error: "reason is required" });
   const result = await adminService.rejectRequest(requestId, req.user.userId, reason);
   return res.json({ success: true, data: result });
+});
+
+export const syncDeposits = asyncHandler(async (req: Request, res: Response) => {
+  const result = await reconcileDeposits(req.user.userId);
+  return res.json({ success: true, data: result });
+});
+
+export const listInstruments = asyncHandler(async (_req: Request, res: Response) => {
+  const [instruments, discoveredAdmin] = await Promise.all([
+    listRegistryInstruments(),
+    discoverInstrumentAdmin(),
+  ]);
+  return res.json({ success: true, data: { instruments, discoveredAdmin } });
 });
 
 export const pqsHealth = asyncHandler(async (_req: Request, res: Response) => {

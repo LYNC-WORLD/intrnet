@@ -222,18 +222,22 @@ export class LedgerClient {
     return contracts;
   }
 
-  private async submitAndWait(commands: Array<Record<string, unknown>>) {
+  private async submitAndWait(
+    commands: Array<Record<string, unknown>>,
+    disclosedContracts?: Array<Record<string, unknown>>,
+  ) {
     const actAs = await this.resolveParties();
     if (!actAs.length) throw new Error("No actAs parties available for ledger command");
 
     const readAs = await this.resolveReadParties(actAs);
-    const body = {
+    const body: Record<string, unknown> = {
       commands: {
         commandId: newCommandId(),
         userId: await this.commandUserId(),
         actAs,
         readAs,
         commands,
+        ...(disclosedContracts && disclosedContracts.length ? { disclosedContracts } : {}),
       },
     };
 
@@ -241,6 +245,7 @@ export class LedgerClient {
       this.http.post("/v2/commands/submit-and-wait-for-transaction", body),
     );
     return res.data.transaction as {
+      updateId?: string;
       offset: number;
       events: V2Event[];
     };
@@ -291,6 +296,74 @@ export class LedgerClient {
     };
   }
 
+  async exerciseWithDisclosed(cmd: ExerciseCmd & {
+    disclosedContracts?: Array<Record<string, unknown>>;
+  }) {
+    const transaction = await this.submitAndWait(
+      [
+        {
+          ExerciseCommand: {
+            templateId: cmd.templateId,
+            contractId: cmd.contractId,
+            choice: cmd.choice,
+            choiceArgument: cmd.argument,
+          },
+        },
+      ],
+      cmd.disclosedContracts,
+    );
+
+    const exercised = transaction.events.find((event) => event.ExercisedEvent)?.ExercisedEvent as
+      | Record<string, unknown>
+      | undefined;
+
+    return {
+      updateId: transaction.updateId ?? null,
+      exerciseResult: exercised?.exerciseResult ?? null,
+      events: toLegacyEvents(transaction.events),
+    };
+  }
+
+  async listActiveContractsRaw() {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const offset = await this.getLedgerEnd();
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/state/active-contracts", {
+        activeAtOffset: offset,
+        eventFormat: {
+          filtersByParty: Object.fromEntries(
+            parties.map((party) => [
+              party,
+              { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: true } } } }] },
+            ]),
+          ),
+        },
+      }),
+    );
+
+    const contracts: Array<{
+      contractId: string;
+      templateId: string;
+      payload: Record<string, unknown>;
+      createdEventBlob: string | null;
+      synchronizerId: string | null;
+    }> = [];
+    for (const item of res.data as Array<Record<string, unknown>>) {
+      const entry = item.contractEntry as Record<string, unknown> | undefined;
+      const active = (entry?.JsActiveContract ?? entry?.ActiveContract) as Record<string, unknown> | undefined;
+      const created = active?.createdEvent as Record<string, unknown> | undefined;
+      if (!created) continue;
+      contracts.push({
+        contractId: created.contractId as string,
+        templateId: created.templateId as string,
+        payload: (created.createArgument ?? {}) as Record<string, unknown>,
+        createdEventBlob: (created.createdEventBlob as string) ?? null,
+        synchronizerId: (active?.synchronizerId as string) ?? null,
+      });
+    }
+    return contracts;
+  }
+
   async query(templateId: string, filter?: QueryFilter) {
     const parties = await this.resolveReadParties(await this.resolveParties());
     const offset = await this.getLedgerEnd();
@@ -305,6 +378,12 @@ export class LedgerClient {
         contractId: contract.contractId,
         payload: contract.payload,
       }));
+  }
+
+  async listActiveContracts() {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const offset = await this.getLedgerEnd();
+    return this.queryActiveContracts(parties, offset);
   }
 
   async fetchById(contractId: string) {

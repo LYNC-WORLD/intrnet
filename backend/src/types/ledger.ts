@@ -56,15 +56,9 @@ export interface PqsSettlementInstruction {
   currency: string;
   cycleId: string;
   status: string;
+  paymentReference: string | null;
   failureReason: string | null;
   createdAt: Date;
-}
-
-export interface PqsCashAccount {
-  contractId: string;
-  owner: string;
-  currency: string;
-  balance: number;
 }
 
 export interface PqsFxRate {

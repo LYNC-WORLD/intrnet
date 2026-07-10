@@ -422,21 +422,30 @@ export const openApiComponents = {
         amount: { type: "number" },
         currency: { type: "string" },
         cycleId: { type: "string" },
-        status: { type: "string", enum: ["PENDING", "EXECUTED", "CONFIRMED"] },
+        status: { type: "string", enum: ["PENDING", "EXECUTED", "CONFIRMED", "FAILED"] },
+        paymentReference: { type: "string", nullable: true },
         failureReason: { type: "string", nullable: true },
         createdAt: dateTime,
       },
       required: ["contractId", "payer", "receiver", "amount", "currency", "cycleId", "status", "createdAt"],
     },
-    CashAccount: {
+    PartyBalance: {
       type: "object",
       properties: {
-        contractId,
-        owner: partyId,
+        partyId,
         currency: { type: "string" },
-        balance: { type: "number" },
+        available: { type: "number" },
+        reserved: { type: "number" },
+        total: { type: "number" },
+        holdingsTotal: { type: "number", nullable: true },
       },
-      required: ["contractId", "owner", "currency", "balance"],
+      required: ["partyId", "currency", "available", "reserved", "total"],
+    },
+    FailSettlementRequest: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Optional human-readable failure reason" },
+      },
     },
 
     // --- Admin / infra ---
@@ -447,11 +456,11 @@ export const openApiComponents = {
         agreementCount: { type: "integer" },
         cycleCount: { type: "integer" },
         obligationCount: { type: "integer" },
-        cashAccountCount: { type: "integer" },
+        settlementInstructionCount: { type: "integer" },
         packageId: { type: "string", description: "Present when connected (optional on error)" },
         error: { type: "string", description: "Present when connected is false (optional on success)" },
       },
-      required: ["connected", "agreementCount", "cycleCount", "obligationCount", "cashAccountCount"],
+      required: ["connected", "agreementCount", "cycleCount", "obligationCount", "settlementInstructionCount"],
     },
 
     // --- Requests ---
@@ -479,7 +488,6 @@ export const openApiComponents = {
         partyHint: { type: "string", description: "Optional; defaults to request partyHint or company slug" },
         agreementId: { type: "string", description: "Optional if request user already has agreementId" },
         agreementContractId: { type: "string", description: "Optional alternative to agreementId" },
-        initialBalance: { type: "string", description: "Optional cash account balance (defaults from env)" },
       },
     },
     RejectOnboardingRequest: {
@@ -491,7 +499,7 @@ export const openApiComponents = {
       type: "object",
       properties: {
         agreementId: { type: "string" },
-        settlementCurrency: { type: "string", default: "USD", description: "Optional; defaults to USD" },
+        settlementCurrency: { type: "string", default: "tUSD", description: "Optional; defaults to SETTLEMENT_CURRENCY env" },
         agreementDate: { ...dateOnly, description: "Optional; defaults to today" },
       },
       required: ["agreementId"],
@@ -573,16 +581,6 @@ export const openApiComponents = {
         },
       },
     },
-    FundAccountRequest: {
-      type: "object",
-      properties: {
-        owner: { ...partyId, description: "Party that owns the cash account" },
-        currency: { type: "string" },
-        amount: { type: "number", minimum: 0, exclusiveMinimum: true },
-      },
-      required: ["owner", "currency", "amount"],
-    },
-
     // --- Typed success responses (success + data) ---
     OnboardingSubmitResponse: {
       allOf: [
@@ -758,6 +756,7 @@ export const routeResponseSchemas = {
   fxRateList: listResponse("#/components/schemas/FxRate"),
   positionList: listResponse("#/components/schemas/NetPosition"),
   settlementInstructionList: listResponse("#/components/schemas/SettlementInstruction"),
-  cashAccountList: listResponse("#/components/schemas/CashAccount"),
+  partyBalance: itemResponse("#/components/schemas/PartyBalance"),
+  partyBalanceList: listResponse("#/components/schemas/PartyBalance"),
   newContractId: itemResponse("#/components/schemas/NewContractIdResult"),
 } as const;

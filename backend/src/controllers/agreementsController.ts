@@ -1,10 +1,11 @@
 import { Request, Response } from "express";
 import * as agreementsService from "../services/agreementsService";
+import { getSettlementCurrency } from "../config/settlementToken";
 import { asyncHandler } from "../utils/asyncHandler";
 import { isServiceError, sendServiceError } from "../utils/http";
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const { agreementId, settlementCurrency = "USD", agreementDate } = req.body as {
+  const { agreementId, settlementCurrency = getSettlementCurrency(), agreementDate } = req.body as {
     agreementId?: string;
     settlementCurrency?: string;
     agreementDate?: string;
