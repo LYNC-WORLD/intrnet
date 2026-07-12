@@ -116,27 +116,99 @@ function groupHoldingsByAdmin(holdings: TokenHolding[]): Map<string, TokenHoldin
   return groups;
 }
 
-function pickHoldingsForAmount(
+export interface HoldingSelection {
+  inputHoldingCids: string[];
+  total: number;
+}
+
+function depositOrderIndex(holdingContractIds?: string[]): Map<string, number> | undefined {
+  if (!holdingContractIds?.length) return undefined;
+  return new Map(holdingContractIds.map((contractId, index) => [contractId, index]));
+}
+
+function sortHoldingsSmallestFirst(
+  holdings: TokenHolding[],
+  depositOrder?: Map<string, number>,
+): TokenHolding[] {
+  return [...holdings].sort((left, right) => {
+    if (left.amount !== right.amount) return left.amount - right.amount;
+    if (depositOrder) {
+      const leftIndex = depositOrder.get(left.contractId) ?? Number.MAX_SAFE_INTEGER;
+      const rightIndex = depositOrder.get(right.contractId) ?? Number.MAX_SAFE_INTEGER;
+      if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+    }
+    return left.contractId.localeCompare(right.contractId);
+  });
+}
+
+export function pickSmallestFirstMultiHoldings(
   holdings: TokenHolding[],
   amount: number,
-): { cids: string[]; total: number } | null {
-  const singles = holdings
-    .filter((holding) => holding.amount >= amount)
-    .sort((a, b) => b.amount - a.amount);
-  if (singles.length > 0) {
-    return { cids: [singles[0].contractId], total: singles[0].amount };
-  }
-
-  const sorted = [...holdings].sort((a, b) => b.amount - a.amount);
+  depositOrder?: Map<string, number>,
+): HoldingSelection | null {
+  const sorted = sortHoldingsSmallestFirst(holdings, depositOrder);
   const selected: string[] = [];
   let total = 0;
   for (const holding of sorted) {
-    if (total >= amount) break;
     selected.push(holding.contractId);
     total += holding.amount;
+    if (total >= amount) break;
   }
   if (total < amount) return null;
-  return { cids: selected, total };
+  return { inputHoldingCids: selected, total };
+}
+
+export function pickSmallestSingleHolding(
+  holdings: TokenHolding[],
+  amount: number,
+  depositOrder?: Map<string, number>,
+): HoldingSelection | null {
+  const covering = sortHoldingsSmallestFirst(holdings, depositOrder).filter(
+    (holding) => holding.amount >= amount,
+  );
+  if (covering.length === 0) return null;
+  const best = covering[0]!;
+  return { inputHoldingCids: [best.contractId], total: best.amount };
+}
+
+export function pickHoldingsForAmount(
+  holdings: TokenHolding[],
+  amount: number,
+  depositOrder?: Map<string, number>,
+): HoldingSelection | null {
+  const multi = pickSmallestFirstMultiHoldings(holdings, amount, depositOrder);
+  if (multi && multi.inputHoldingCids.length > 1) return multi;
+
+  const single = pickSmallestSingleHolding(holdings, amount, depositOrder);
+  if (single) return single;
+
+  return multi;
+}
+
+export function enumerateHoldingSelections(
+  holdings: TokenHolding[],
+  amount: number,
+  depositOrder?: Map<string, number>,
+): HoldingSelection[] {
+  const sorted = sortHoldingsSmallestFirst(holdings, depositOrder);
+  const selections: HoldingSelection[] = [];
+  const seen = new Set<string>();
+
+  const add = (selection: HoldingSelection | null) => {
+    if (!selection) return;
+    const key = selection.inputHoldingCids.join(",");
+    if (seen.has(key)) return;
+    seen.add(key);
+    selections.push(selection);
+  };
+
+  add(pickSmallestFirstMultiHoldings(holdings, amount, depositOrder));
+
+  for (const holding of sorted.filter((entry) => entry.amount >= amount)) {
+    add({ inputHoldingCids: [holding.contractId], total: holding.amount });
+  }
+
+  return selections;
 }
 
 function orderAdminGroups(
@@ -176,6 +248,7 @@ export async function enumerateHoldingCandidates(
   const eligibleHoldings = allowedHoldingIds
     ? allHoldings.filter((holding) => allowedHoldingIds.has(holding.contractId))
     : allHoldings;
+  const depositOrder = depositOrderIndex(opts.holdingContractIds);
   const configuredAdmin = process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim();
   const groups = groupHoldingsByAdmin(eligibleHoldings);
   const candidates: SelectedHoldings[] = [];
@@ -183,27 +256,9 @@ export async function enumerateHoldingCandidates(
 
   for (const admin of orderAdminGroups(groups, configuredAdmin)) {
     const group = groups.get(admin)!;
-    const singles = group
-      .filter((holding) => holding.amount >= amount)
-      .sort((a, b) => b.amount - a.amount);
-
-    for (const holding of singles) {
+    for (const picked of enumerateHoldingSelections(group, amount, depositOrder)) {
       const selection = {
-        inputHoldingCids: [holding.contractId],
-        total: holding.amount,
-        instrumentAdmin: admin,
-      };
-      const key = candidateKey(selection);
-      if (!seen.has(key)) {
-        seen.add(key);
-        candidates.push(selection);
-      }
-    }
-
-    const picked = pickHoldingsForAmount(group, amount);
-    if (picked) {
-      const selection = {
-        inputHoldingCids: picked.cids,
+        inputHoldingCids: picked.inputHoldingCids,
         total: picked.total,
         instrumentAdmin: admin,
       };
@@ -231,7 +286,7 @@ export async function selectHoldingsForAmount(
     const picked = pickHoldingsForAmount(groups.get(admin)!, amount);
     if (picked) {
       return {
-        inputHoldingCids: picked.cids,
+        inputHoldingCids: picked.inputHoldingCids,
         total: picked.total,
         instrumentAdmin: admin,
       };
