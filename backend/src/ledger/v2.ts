@@ -42,6 +42,12 @@ export function matchesTemplate(templateId: string, expected: string): boolean {
   return templateSuffix(templateId) === expected || templateId.endsWith(`:${expected}`);
 }
 
+export function packageIdFromTemplateId(templateId: string): string | null {
+  const parts = templateId.split(":");
+  if (parts.length >= 3) return parts[0] ?? null;
+  return null;
+}
+
 export function qualifyTemplateId(templateId: string, packageId: string): string {
   if (templateId.split(":").length >= 3) return templateId;
   return `${packageId}:${templateId}`;

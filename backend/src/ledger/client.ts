@@ -4,6 +4,7 @@ import {
   extractPackageId,
   matchesTemplate,
   newCommandId,
+  packageIdFromTemplateId,
   qualifyTemplateId,
   templateSuffix,
   toLegacyEvents,
@@ -483,13 +484,22 @@ export class LedgerClient {
     return contracts;
   }
 
-  async query(templateId: string, filter?: QueryFilter) {
+  async query(
+    templateId: string,
+    filter?: QueryFilter,
+    opts?: { currentPackageOnly?: boolean },
+  ) {
     const parties = await this.resolveReadParties(await this.resolveParties());
     const offset = await this.getLedgerEnd();
     const contracts = await this.queryActiveContracts(parties, offset);
+    const packageId = opts?.currentPackageOnly ? await this.ensurePackageId() : null;
     return contracts
       .filter((contract) => matchesTemplate(contract.templateId, templateId))
       .filter((contract) => {
+        if (packageId) {
+          const contractPackageId = packageIdFromTemplateId(contract.templateId);
+          if (contractPackageId !== packageId) return false;
+        }
         if (!filter) return true;
         return Object.entries(filter).every(([key, value]) => contract.payload[key] === value);
       })

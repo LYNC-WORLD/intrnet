@@ -92,7 +92,7 @@ export async function refreshFxRates() {
     const now = data.time_last_update_utc
       ? new Date(data.time_last_update_utc).toISOString()
       : new Date().toISOString();
-    const existing = await client.query(T.FxRateOracle);
+    const existing = await client.query(T.FxRateOracle, undefined, { currentPackageOnly: true });
 
     for (const currency of CURRENCIES) {
       const rate = rates[currency];
@@ -102,11 +102,17 @@ export async function refreshFxRates() {
       }
 
       const invRate = 1 / rate;
-      const existingContract = existing.find(
-        (c) =>
-          c.payload.fromCurrency === currency &&
-          oracleToCurrencyMatchesSettlement(c.payload.toCurrency as string, FX_ORACLE_TARGET_CURRENCY),
+      const matching = existing.filter(
+        (contract) =>
+          contract.payload.fromCurrency === currency &&
+          oracleToCurrencyMatchesSettlement(
+            contract.payload.toCurrency as string,
+            FX_ORACLE_TARGET_CURRENCY,
+          ),
       );
+      const existingContract =
+        matching.find((contract) => contract.payload.toCurrency === FX_ORACLE_TARGET_CURRENCY) ??
+        matching[0];
 
       if (existingContract) {
         try {
