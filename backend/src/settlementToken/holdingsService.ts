@@ -176,6 +176,12 @@ export function pickHoldingsForAmount(
   amount: number,
   depositOrder?: Map<string, number>,
 ): HoldingSelection | null {
+  const sorted = sortHoldingsSmallestFirst(holdings, depositOrder);
+  const exact = sorted.find((holding) => holding.amount === amount);
+  if (exact) {
+    return { inputHoldingCids: [exact.contractId], total: exact.amount };
+  }
+
   const multi = pickSmallestFirstMultiHoldings(holdings, amount, depositOrder);
   if (multi && multi.inputHoldingCids.length > 1) return multi;
 
@@ -201,6 +207,11 @@ export function enumerateHoldingSelections(
     seen.add(key);
     selections.push(selection);
   };
+
+  const exact = sorted.find((holding) => holding.amount === amount);
+  if (exact) {
+    add({ inputHoldingCids: [exact.contractId], total: exact.amount });
+  }
 
   add(pickSmallestFirstMultiHoldings(holdings, amount, depositOrder));
 

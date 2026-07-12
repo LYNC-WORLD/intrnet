@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { listTokenHoldings } from "./holdingsService";
 import { acceptPendingIncomingTransfers } from "./transferInstructionService";
@@ -7,8 +8,13 @@ import {
   resolveReceiverHoldingCidsFromUpdate,
   resolveTransferInstructionDepositor,
 } from "./depositAttribution";
-import { creditDeposit, sumRecordedDepositCredits } from "../services/balanceService";
+import {
+  creditDeposit,
+  revokeStaleDepositCredit,
+  sumRecordedDepositCredits,
+} from "../services/balanceService";
 import { getSettlementCurrency } from "../config/settlementToken";
+import { toNumber } from "../utils/amount";
 
 export interface DepositReconcileResult {
   custodyParty: string;
@@ -27,6 +33,7 @@ export interface DepositReconcileResult {
   depositCreditDrift: number;
   credited: Array<{ partyId: string; amount: number; holdingContractId: string }>;
   unattributed: Array<{ amount: number; holdingContractId: string }>;
+  staleRevoked: Array<{ partyId: string; amount: number; holdingContractId: string }>;
   alreadyApplied: number;
   skippedUnknownParty: Array<{ partyId: string; amount: number; holdingContractId: string }>;
 }
@@ -131,7 +138,59 @@ async function resolveAcceptedHoldingCids(params: {
   return fallback.length > 0 ? [fallback[0]] : [];
 }
 
+async function reconcileArchivedDepositCredits(params: {
+  createdBy?: string;
+  partyId?: string;
+}): Promise<DepositReconcileResult["staleRevoked"]> {
+  const custodyParty = await getOperatorPartyId();
+  const activeHoldings = await listTokenHoldings(custodyParty);
+  const activeIds = new Set(activeHoldings.map((holding) => holding.contractId));
+
+  const deposits = await prisma.balanceLedgerEntry.findMany({
+    where: {
+      referenceType: "DEPOSIT",
+      entryType: "CREDIT",
+      referenceId: { not: null },
+      ...(params.partyId ? { partyId: params.partyId } : {}),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const client = await operatorClient();
+  const staleRevoked: DepositReconcileResult["staleRevoked"] = [];
+
+  for (const deposit of deposits) {
+    const holdingContractId = deposit.referenceId;
+    if (!holdingContractId || activeIds.has(holdingContractId)) continue;
+
+    const lifecycle = await client.fetchContractLifecycle(holdingContractId);
+    if (!lifecycle?.archived) continue;
+
+    const result = await revokeStaleDepositCredit({
+      holdingContractId,
+      createdBy: params.createdBy,
+    });
+    if (!result.revoked) continue;
+
+    staleRevoked.push({
+      partyId: deposit.partyId,
+      amount: result.amount ?? toNumber(deposit.amount),
+      holdingContractId,
+    });
+  }
+
+  return staleRevoked;
+}
+
+export async function reconcileStaleDepositsForParty(
+  partyId: string,
+  createdBy?: string,
+): Promise<DepositReconcileResult["staleRevoked"]> {
+  return reconcileArchivedDepositCredits({ partyId, createdBy });
+}
+
 export async function reconcileDeposits(createdBy?: string): Promise<DepositReconcileResult> {
+  const staleRevoked = await reconcileArchivedDepositCredits({ createdBy });
   const custodyParty = await getOperatorPartyId();
   const currency = getSettlementCurrency();
   const creditNote = `Auto-credited from inbound ${currency} custody deposit`;
@@ -217,6 +276,7 @@ export async function reconcileDeposits(createdBy?: string): Promise<DepositReco
     depositCreditDrift: Number((attributedOnChainTotal - recordedDepositCreditsTotal).toFixed(8)),
     credited,
     unattributed,
+    staleRevoked,
     alreadyApplied,
     skippedUnknownParty,
   };

@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { getSettlementCurrency } from "../config/settlementToken";
+import { getOperatorPartyId } from "../ledger/operatorParty";
+import { listTokenHoldings } from "../settlementToken/holdingsService";
 import { assertPositiveAmount, decimalAmount, toNumber } from "../utils/amount";
 
 export interface PartyBalanceView {
@@ -59,19 +61,136 @@ export async function getSettlementTransferReference(instructionCid: string): Pr
   return entry?.referenceId ?? null;
 }
 
+function depositReversalReferenceId(holdingContractId: string): string {
+  return `revoked:${holdingContractId}`;
+}
+
+async function listReversedDepositHoldingIds(holdingContractIds: string[]): Promise<Set<string>> {
+  if (holdingContractIds.length === 0) return new Set();
+
+  const reversals = await prisma.balanceLedgerEntry.findMany({
+    where: {
+      referenceType: "DEPOSIT_REVERSAL",
+      referenceId: { in: holdingContractIds.map(depositReversalReferenceId) },
+    },
+    select: { referenceId: true },
+  });
+
+  return new Set(
+    reversals
+      .map((entry) => entry.referenceId?.replace(/^revoked:/, ""))
+      .filter((referenceId): referenceId is string => Boolean(referenceId)),
+  );
+}
+
 export async function listDepositHoldingIdsForParty(partyId: string): Promise<string[]> {
   const entries = await prisma.balanceLedgerEntry.findMany({
     where: {
       partyId,
       referenceType: "DEPOSIT",
+      entryType: "CREDIT",
       referenceId: { not: null },
     },
     orderBy: { createdAt: "asc" },
   });
 
-  return entries
+  const holdingIds = entries
     .map((entry) => entry.referenceId)
     .filter((referenceId): referenceId is string => Boolean(referenceId));
+  const reversed = await listReversedDepositHoldingIds(holdingIds);
+  return holdingIds.filter((holdingId) => !reversed.has(holdingId));
+}
+
+export async function listActiveDepositHoldingIdsForParty(partyId: string): Promise<string[]> {
+  const custodyPartyId = await getOperatorPartyId();
+  const recordedHoldingIds = await listDepositHoldingIdsForParty(partyId);
+  const activeHoldings = await listTokenHoldings(custodyPartyId);
+  const activeById = new Map(activeHoldings.map((holding) => [holding.contractId, holding]));
+
+  const activeRecorded = recordedHoldingIds.filter((holdingId) => activeById.has(holdingId));
+  const seen = new Set(activeRecorded);
+
+  for (const holding of activeHoldings) {
+    if (seen.has(holding.contractId)) continue;
+    if (holding.attributedParty === partyId) {
+      activeRecorded.push(holding.contractId);
+      seen.add(holding.contractId);
+    }
+  }
+
+  return activeRecorded;
+}
+
+export async function revokeStaleDepositCredit(params: {
+  holdingContractId: string;
+  createdBy?: string;
+  note?: string;
+}): Promise<{ revoked: boolean; partyId?: string; amount?: number }> {
+  const holdingContractId = params.holdingContractId.trim();
+  if (!holdingContractId) return { revoked: false };
+
+  const deposit = await prisma.balanceLedgerEntry.findUnique({
+    where: {
+      referenceType_referenceId: {
+        referenceType: "DEPOSIT",
+        referenceId: holdingContractId,
+      },
+    },
+  });
+  if (!deposit || deposit.entryType !== "CREDIT" || !deposit.referenceId) {
+    return { revoked: false };
+  }
+
+  const reversalReferenceId = depositReversalReferenceId(holdingContractId);
+  const existingReversal = await prisma.balanceLedgerEntry.findUnique({
+    where: {
+      referenceType_referenceId: {
+        referenceType: "DEPOSIT_REVERSAL",
+        referenceId: reversalReferenceId,
+      },
+    },
+  });
+  if (existingReversal) {
+    return { revoked: false, partyId: deposit.partyId, amount: toNumber(deposit.amount) };
+  }
+
+  const currency = getSettlementCurrency();
+  const amount = toNumber(deposit.amount);
+  const note =
+    params.note ??
+    `Reversed stale deposit credit for archived custody holding ${holdingContractId}`;
+
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.partyBalance.updateMany({
+      where: {
+        partyId: deposit.partyId,
+        available: { gte: deposit.amount },
+      },
+      data: {
+        available: { decrement: deposit.amount },
+      },
+    });
+    if (updated.count === 0) {
+      throw new Error(
+        `Cannot revoke stale deposit ${holdingContractId}: insufficient available balance for ${deposit.partyId}`,
+      );
+    }
+
+    await tx.balanceLedgerEntry.create({
+      data: {
+        partyId: deposit.partyId,
+        entryType: "DEBIT",
+        amount: deposit.amount,
+        currency,
+        referenceType: "DEPOSIT_REVERSAL",
+        referenceId: reversalReferenceId,
+        createdBy: params.createdBy,
+        note,
+      },
+    });
+  });
+
+  return { revoked: true, partyId: deposit.partyId, amount };
 }
 
 export async function recordSettlementTransfer(params: {

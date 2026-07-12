@@ -8,7 +8,7 @@ import {
   getOrCreatePartyBalance,
   getPartyBalance,
   hasLedgerEntry,
-  listDepositHoldingIdsForParty,
+  listActiveDepositHoldingIdsForParty,
   listPartyBalances,
   getSettlementTransferReference,
   recordSettlementTransfer,
@@ -18,6 +18,7 @@ import {
 } from "./balanceService";
 import { getTokenHoldingsTotal } from "../settlementToken/holdingsService";
 import { executeTokenTransfer } from "../settlementToken/transferService";
+import { reconcileStaleDepositsForParty } from "../settlementToken/depositIndexer";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
   acceptIncomingTransfer,
@@ -123,6 +124,8 @@ export async function executeSettlement(contractId: string) {
   let paymentReference: string | null = null;
 
   try {
+    await reconcileStaleDepositsForParty(instruction.payer);
+
     await reserveBalance({
       partyId: instruction.payer,
       amount: instruction.amount,
@@ -135,7 +138,7 @@ export async function executeSettlement(contractId: string) {
       instruction.paymentReference;
 
     if (!paymentReference) {
-      const holdingContractIds = await listDepositHoldingIdsForParty(instruction.payer);
+      const holdingContractIds = await listActiveDepositHoldingIdsForParty(instruction.payer);
       const transfer = await executeTokenTransfer({
         receiverPartyId: instruction.receiver,
         amount: instruction.amount,
