@@ -22,6 +22,7 @@ export interface TransferResult {
 const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
 const REQUESTED_AT_SKEW_MS = 1000;
 const LOG_PREFIX = "[SettlementTransfer]";
+const MAX_FACTORY_ATTEMPTS_PER_CANDIDATE = 3;
 
 function transferDebugEnabled(): boolean {
   const flag = process.env.SETTLEMENT_TRANSFER_DEBUG?.trim().toLowerCase();
@@ -145,6 +146,7 @@ async function submitTransferForCandidate(params: {
   transferDeadlineSeconds: number;
   meta?: Record<string, string>;
   attemptIndex: number;
+  factoryAttemptIndex: number;
 }): Promise<{ factory: TransferFactoryResult; updateId: string }> {
   const validation = await validateCandidateHoldings(params.sender, params.candidate.inputHoldingCids);
   if (!validation.ok) {
@@ -170,6 +172,7 @@ async function submitTransferForCandidate(params: {
 
   logTransferDebug("transfer-factory request", {
     attemptIndex: params.attemptIndex,
+    factoryAttemptIndex: params.factoryAttemptIndex,
     sender: params.sender,
     receiver: params.receiver,
     amount: transfer.amount,
@@ -193,6 +196,7 @@ async function submitTransferForCandidate(params: {
 
   logTransferDebug("transfer-factory response", {
     attemptIndex: params.attemptIndex,
+    factoryAttemptIndex: params.factoryAttemptIndex,
     ...summarizeFactory(factory),
   });
 
@@ -208,6 +212,7 @@ async function submitTransferForCandidate(params: {
   const disclosed = toLedgerDisclosed(factory.disclosedContracts);
   logTransferDebug("ledger submit", {
     attemptIndex: params.attemptIndex,
+    factoryAttemptIndex: params.factoryAttemptIndex,
     exerciseContractId: factory.factoryId,
     templateId: TRANSFER_FACTORY_INTERFACE_ID,
     disclosedCount: disclosed.length,
@@ -230,6 +235,7 @@ async function submitTransferForCandidate(params: {
 
     logTransferDebug("ledger submit succeeded", {
       attemptIndex: params.attemptIndex,
+      factoryAttemptIndex: params.factoryAttemptIndex,
       updateId: result.updateId,
       transferKind: factory.transferKind,
     });
@@ -239,6 +245,7 @@ async function submitTransferForCandidate(params: {
     const formatted = formatTransferError(err);
     logTransferDebug("ledger submit failed", {
       attemptIndex: params.attemptIndex,
+      factoryAttemptIndex: params.factoryAttemptIndex,
       error: formatted.message,
       exerciseContractId: factory.factoryId,
       inputHoldingCids: transfer.inputHoldingCids,
@@ -299,31 +306,50 @@ export async function executeTokenTransfer(params: {
 
   for (let attemptIndex = 0; attemptIndex < attemptCandidates.length; attemptIndex++) {
     const candidate = attemptCandidates[attemptIndex]!;
-    try {
-      const { factory, updateId } = await submitTransferForCandidate({
-        candidate,
-        sender,
-        receiver,
-        amount: params.amount,
-        instrumentId: config.instrumentId,
-        transferDeadlineSeconds: config.transferDeadlineSeconds,
-        meta: params.meta,
-        attemptIndex,
-      });
+    for (
+      let factoryAttemptIndex = 0;
+      factoryAttemptIndex < MAX_FACTORY_ATTEMPTS_PER_CANDIDATE;
+      factoryAttemptIndex++
+    ) {
+      try {
+        const { factory, updateId } = await submitTransferForCandidate({
+          candidate,
+          sender,
+          receiver,
+          amount: params.amount,
+          instrumentId: config.instrumentId,
+          transferDeadlineSeconds: config.transferDeadlineSeconds,
+          meta: params.meta,
+          attemptIndex,
+          factoryAttemptIndex,
+        });
 
-      return {
-        paymentReference: updateId,
-        transferKind: factory.transferKind,
-      };
-    } catch (err) {
-      const formatted = formatTransferError(err);
-      if (!isRetryableTransferError(formatted)) throw formatted;
-      lastRetryableError = formatted;
-      logTransferDebug("candidate failed, trying next", {
-        attemptIndex,
-        inputHoldingCids: candidate.inputHoldingCids,
-        error: formatted.message,
-      });
+        return {
+          paymentReference: updateId,
+          transferKind: factory.transferKind,
+        };
+      } catch (err) {
+        const formatted = formatTransferError(err);
+        if (!isRetryableTransferError(formatted)) throw formatted;
+        lastRetryableError = formatted;
+        const hasMoreFactoryAttempts =
+          factoryAttemptIndex + 1 < MAX_FACTORY_ATTEMPTS_PER_CANDIDATE;
+        if (hasMoreFactoryAttempts) {
+          logTransferDebug("candidate attempt failed, refreshing factory context", {
+            attemptIndex,
+            factoryAttemptIndex,
+            inputHoldingCids: candidate.inputHoldingCids,
+            error: formatted.message,
+          });
+          continue;
+        }
+        logTransferDebug("candidate failed, trying next", {
+          attemptIndex,
+          factoryAttemptIndex,
+          inputHoldingCids: candidate.inputHoldingCids,
+          error: formatted.message,
+        });
+      }
     }
   }
 
