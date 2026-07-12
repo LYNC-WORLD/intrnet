@@ -41,6 +41,12 @@ export function getSettlementCurrency(): string {
   return process.env.SETTLEMENT_CURRENCY ?? process.env.SETTLEMENT_INSTRUMENT_ID ?? "tUSD";
 }
 
+export function currenciesMatchForSettlement(left: string, right: string): boolean {
+  if (left === right) return true;
+  const usdFamily = new Set(["USD", "tUSD"]);
+  return usdFamily.has(left) && usdFamily.has(right);
+}
+
 export function getRegistryBaseUrl(): string {
   const explicit = process.env.UTILITY_REGISTRY_BASE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");

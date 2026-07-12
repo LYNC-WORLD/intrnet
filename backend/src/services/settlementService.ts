@@ -2,7 +2,7 @@ import { operatorClient, partyClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
 import { extractRecreatedContractId } from "../ledger/v2";
 import { toConflictError } from "../utils/http";
-import { getSettlementCurrency } from "../config/settlementToken";
+import { currenciesMatchForSettlement, getSettlementCurrency } from "../config/settlementToken";
 import {
   finalizeSettlementBalances,
   getOrCreatePartyBalance,
@@ -68,8 +68,6 @@ export async function getSettlementBalance(
   const balance = await getOrCreatePartyBalance(partyId, 0);
   let holdingsTotal: number | null = null;
 
-  // Custodial tUSD: Holdings sit on the operator custody party. The operator M2M user
-  // only has CanReadAs for operator parties, so querying a participant ACS returns 403.
   const custodyParty = await getOperatorPartyId();
   if (partyId === custodyParty) {
     try {
@@ -109,7 +107,7 @@ export async function executeSettlement(contractId: string) {
   }
 
   const settlementCurrency = getSettlementCurrency();
-  if (instruction.currency !== settlementCurrency) {
+  if (!currenciesMatchForSettlement(instruction.currency, settlementCurrency)) {
     return {
       error: `Instruction currency ${instruction.currency} does not match settlement currency ${settlementCurrency}`,
       status: 400 as const,
