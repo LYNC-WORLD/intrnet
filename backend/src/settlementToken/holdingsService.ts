@@ -66,7 +66,8 @@ export async function listTokenHoldings(
     const payload = contract.payload;
     const instrument = parseInstrument(payload);
     if (!instrument || instrument.id !== instrumentId) continue;
-    if (enforceAdmin && instrument.admin && instrument.admin !== expectedAdmin) continue;
+    if (!instrument.admin) continue;
+    if (enforceAdmin && instrument.admin !== expectedAdmin) continue;
 
     const owner =
       (typeof payload.owner === "string" && payload.owner) ||
@@ -84,7 +85,7 @@ export async function listTokenHoldings(
       owner,
       amount,
       instrumentId: instrument.id,
-      instrumentAdmin: instrument.admin ?? expectedAdmin,
+      instrumentAdmin: instrument.admin,
       createdEventBlob: contract.createdEventBlob,
       attributedParty: parseDepositAttributionParty(payload),
     });
@@ -98,23 +99,82 @@ export async function getTokenHoldingsTotal(partyId: string): Promise<number> {
   return holdings.reduce((sum, holding) => sum + holding.amount, 0);
 }
 
-export async function selectHoldingsForAmount(
-  ownerPartyId: string,
+export interface SelectedHoldings {
+  inputHoldingCids: string[];
+  total: number;
+  instrumentAdmin: string;
+}
+
+function groupHoldingsByAdmin(holdings: TokenHolding[]): Map<string, TokenHolding[]> {
+  const groups = new Map<string, TokenHolding[]>();
+  for (const holding of holdings) {
+    if (!holding.instrumentAdmin) continue;
+    const list = groups.get(holding.instrumentAdmin) ?? [];
+    list.push(holding);
+    groups.set(holding.instrumentAdmin, list);
+  }
+  return groups;
+}
+
+function pickHoldingsForAmount(
+  holdings: TokenHolding[],
   amount: number,
-): Promise<{ inputHoldingCids: string[]; total: number }> {
-  const currency = getSettlementCurrency();
-  const holdings = (await listTokenHoldings(ownerPartyId)).sort((a, b) => b.amount - a.amount);
+): { cids: string[]; total: number } | null {
+  const singles = holdings
+    .filter((holding) => holding.amount >= amount)
+    .sort((a, b) => a.amount - b.amount);
+  if (singles.length > 0) {
+    return { cids: [singles[0].contractId], total: singles[0].amount };
+  }
+
+  const sorted = [...holdings].sort((a, b) => b.amount - a.amount);
   const selected: string[] = [];
   let total = 0;
-  for (const holding of holdings) {
+  for (const holding of sorted) {
     if (total >= amount) break;
     selected.push(holding.contractId);
     total += holding.amount;
   }
-  if (total < amount) {
-    throw new Error(
-      `Insufficient ${currency} holdings for ${ownerPartyId}: need ${amount}, available ${total}`,
-    );
+  if (total < amount) return null;
+  return { cids: selected, total };
+}
+
+export async function selectHoldingsForAmount(
+  ownerPartyId: string,
+  amount: number,
+): Promise<SelectedHoldings> {
+  const currency = getSettlementCurrency();
+  const allHoldings = await listTokenHoldings(ownerPartyId);
+  const configuredAdmin = process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim();
+  const groups = groupHoldingsByAdmin(allHoldings);
+
+  const orderedAdmins = [...groups.keys()].sort((left, right) => {
+    const totalLeft = groups.get(left)!.reduce((sum, holding) => sum + holding.amount, 0);
+    const totalRight = groups.get(right)!.reduce((sum, holding) => sum + holding.amount, 0);
+    return totalRight - totalLeft;
+  });
+
+  if (configuredAdmin) {
+    orderedAdmins.sort((left, right) => {
+      if (left === configuredAdmin) return -1;
+      if (right === configuredAdmin) return 1;
+      return 0;
+    });
   }
-  return { inputHoldingCids: selected, total };
+
+  for (const admin of orderedAdmins) {
+    const picked = pickHoldingsForAmount(groups.get(admin)!, amount);
+    if (picked) {
+      return {
+        inputHoldingCids: picked.cids,
+        total: picked.total,
+        instrumentAdmin: admin,
+      };
+    }
+  }
+
+  const available = allHoldings.reduce((sum, holding) => sum + holding.amount, 0);
+  throw new Error(
+    `Insufficient ${currency} holdings for ${ownerPartyId}: need ${amount}, available ${available}`,
+  );
 }

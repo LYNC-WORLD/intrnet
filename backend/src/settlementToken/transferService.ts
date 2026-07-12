@@ -2,7 +2,6 @@ import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
   getTokenConfig,
-  resolveInstrumentAdmin,
   TRANSFER_FACTORY_INTERFACE_ID,
 } from "../config/settlementToken";
 import { assertPositiveAmount, formatTokenAmount } from "../utils/amount";
@@ -38,10 +37,12 @@ export async function executeTokenTransfer(params: {
   }
 
   const config = getTokenConfig();
-  const admin = await resolveInstrumentAdmin();
   const sender = await getOperatorPartyId();
 
-  const { inputHoldingCids } = await selectHoldingsForAmount(sender, params.amount);
+  const { inputHoldingCids, instrumentAdmin: admin } = await selectHoldingsForAmount(
+    sender,
+    params.amount,
+  );
 
   const now = new Date();
   const executeBefore = new Date(now.getTime() + config.transferDeadlineSeconds * 1000);
@@ -51,20 +52,24 @@ export async function executeTokenTransfer(params: {
     receiver,
     amount: formatTokenAmount(params.amount),
     instrumentId: { admin, id: config.instrumentId },
+    lock: null,
     requestedAt: now.toISOString(),
     executeBefore: executeBefore.toISOString(),
     inputHoldingCids,
     meta: { values: params.meta ?? {} },
   };
 
-  const factory = await getTransferFactory({
-    expectedAdmin: admin,
-    transfer,
-    extraArgs: {
-      context: { values: {} },
-      meta: { values: {} },
+  const factory = await getTransferFactory(
+    {
+      expectedAdmin: admin,
+      transfer,
+      extraArgs: {
+        context: { values: {} },
+        meta: { values: {} },
+      },
     },
-  });
+    admin,
+  );
 
   const choiceArgument = {
     expectedAdmin: admin,

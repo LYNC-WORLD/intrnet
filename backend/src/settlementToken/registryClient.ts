@@ -84,8 +84,9 @@ function normalizeDisclosed(raw: unknown): DisclosedContract[] {
 
 export async function getTransferFactory(
   choiceArguments: Record<string, unknown>,
+  registryAdmin?: string,
 ): Promise<TransferFactoryResult> {
-  const admin = await resolveInstrumentAdmin();
+  const admin = registryAdmin ?? (await resolveInstrumentAdmin());
   const client = http(getTokenStandardBaseUrl(admin));
   try {
     const res = await client.post("/transfer-instruction/v1/transfer-factory", {
