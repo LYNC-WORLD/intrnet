@@ -139,15 +139,10 @@ function pickHoldingsForAmount(
   return { cids: selected, total };
 }
 
-export async function selectHoldingsForAmount(
-  ownerPartyId: string,
-  amount: number,
-): Promise<SelectedHoldings> {
-  const currency = getSettlementCurrency();
-  const allHoldings = await listTokenHoldings(ownerPartyId);
-  const configuredAdmin = process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim();
-  const groups = groupHoldingsByAdmin(allHoldings);
-
+function orderAdminGroups(
+  groups: Map<string, TokenHolding[]>,
+  configuredAdmin?: string,
+): string[] {
   const orderedAdmins = [...groups.keys()].sort((left, right) => {
     const totalLeft = groups.get(left)!.reduce((sum, holding) => sum + holding.amount, 0);
     const totalRight = groups.get(right)!.reduce((sum, holding) => sum + holding.amount, 0);
@@ -162,7 +157,70 @@ export async function selectHoldingsForAmount(
     });
   }
 
-  for (const admin of orderedAdmins) {
+  return orderedAdmins;
+}
+
+function candidateKey(selection: SelectedHoldings): string {
+  return `${selection.instrumentAdmin}:${selection.inputHoldingCids.join(",")}`;
+}
+
+export async function enumerateHoldingCandidates(
+  ownerPartyId: string,
+  amount: number,
+): Promise<SelectedHoldings[]> {
+  const allHoldings = await listTokenHoldings(ownerPartyId);
+  const configuredAdmin = process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim();
+  const groups = groupHoldingsByAdmin(allHoldings);
+  const candidates: SelectedHoldings[] = [];
+  const seen = new Set<string>();
+
+  for (const admin of orderAdminGroups(groups, configuredAdmin)) {
+    const group = groups.get(admin)!;
+    const singles = group
+      .filter((holding) => holding.amount >= amount)
+      .sort((a, b) => b.amount - a.amount);
+
+    for (const holding of singles) {
+      const selection = {
+        inputHoldingCids: [holding.contractId],
+        total: holding.amount,
+        instrumentAdmin: admin,
+      };
+      const key = candidateKey(selection);
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push(selection);
+      }
+    }
+
+    const picked = pickHoldingsForAmount(group, amount);
+    if (picked) {
+      const selection = {
+        inputHoldingCids: picked.cids,
+        total: picked.total,
+        instrumentAdmin: admin,
+      };
+      const key = candidateKey(selection);
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push(selection);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+export async function selectHoldingsForAmount(
+  ownerPartyId: string,
+  amount: number,
+): Promise<SelectedHoldings> {
+  const currency = getSettlementCurrency();
+  const allHoldings = await listTokenHoldings(ownerPartyId);
+  const configuredAdmin = process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim();
+  const groups = groupHoldingsByAdmin(allHoldings);
+
+  for (const admin of orderAdminGroups(groups, configuredAdmin)) {
     const picked = pickHoldingsForAmount(groups.get(admin)!, amount);
     if (picked) {
       return {
