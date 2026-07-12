@@ -77,6 +77,24 @@ function amountsMatch(left: number, right: number): boolean {
   return Math.abs(left - right) < 0.00000001;
 }
 
+function selectDepositHoldingCids(params: {
+  cids: string[];
+  transferAmount: number;
+  holdingsById: Map<string, { contractId: string; amount: number }>;
+  creditedHoldingIds: Set<string>;
+}): string[] {
+  const matching = params.cids.filter((cid) => {
+    if (params.creditedHoldingIds.has(cid)) return false;
+    const holding = params.holdingsById.get(cid);
+    return holding !== undefined && amountsMatch(holding.amount, params.transferAmount);
+  });
+
+  if (matching.length === 0) return [];
+
+  // One inbound transfer creates one custody holding equal to the transfer amount.
+  return [matching[0]];
+}
+
 async function resolveAcceptedHoldingCids(params: {
   accepted: {
     amount: number;
@@ -87,22 +105,30 @@ async function resolveAcceptedHoldingCids(params: {
   holdingsById: Map<string, { contractId: string; amount: number }>;
   creditedHoldingIds: Set<string>;
 }): Promise<string[]> {
-  if (params.accepted.receiverHoldingCids.length > 0) {
-    return params.accepted.receiverHoldingCids;
-  }
+  const candidateCids =
+    params.accepted.receiverHoldingCids.length > 0
+      ? params.accepted.receiverHoldingCids
+      : params.accepted.updateId
+        ? await resolveReceiverHoldingCidsFromUpdate(params.accepted.updateId)
+        : [];
 
-  if (params.accepted.updateId) {
-    const fromUpdate = await resolveReceiverHoldingCidsFromUpdate(params.accepted.updateId);
-    if (fromUpdate.length > 0) return fromUpdate;
-  }
+  const fromCandidates = selectDepositHoldingCids({
+    cids: candidateCids,
+    transferAmount: params.accepted.amount,
+    holdingsById: params.holdingsById,
+    creditedHoldingIds: params.creditedHoldingIds,
+  });
+  if (fromCandidates.length > 0) return fromCandidates;
 
-  return [...params.holdingsById.values()]
+  const fallback = [...params.holdingsById.values()]
     .filter(
       (holding) =>
         !params.creditedHoldingIds.has(holding.contractId) &&
         amountsMatch(holding.amount, params.accepted.amount),
     )
     .map((holding) => holding.contractId);
+
+  return fallback.length > 0 ? [fallback[0]] : [];
 }
 
 export async function reconcileDeposits(createdBy?: string): Promise<DepositReconcileResult> {
@@ -138,10 +164,11 @@ export async function reconcileDeposits(createdBy?: string): Promise<DepositReco
 
     for (const holdingContractId of holdingCids) {
       const holding = holdingsById.get(holdingContractId);
-      const amount = holding?.amount ?? accepted.amount;
+      if (!holding) continue;
+
       alreadyApplied += await creditDepositForParty({
         partyId: depositorPartyId,
-        amount,
+        amount: holding.amount,
         holdingContractId,
         createdBy,
         note: creditNote,

@@ -114,7 +114,10 @@ function extractReceiverHoldingCids(
   events: ExerciseEvents,
   rawEvents: Array<Record<string, unknown>>,
 ): string[] {
-  const cids = new Set<string>(extractReceiverHoldingCidsFromExerciseResult(exerciseResult));
+  const fromResult = extractReceiverHoldingCidsFromExerciseResult(exerciseResult);
+  if (fromResult.length > 0) return fromResult;
+
+  const cids = new Set<string>();
 
   const addCid = (value: unknown) => {
     const cid = extractExerciseContractId(value);
