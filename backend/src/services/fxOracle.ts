@@ -10,7 +10,18 @@ const CURRENCIES = (process.env.SUPPORTED_CURRENCIES ?? "EUR,GBP,JPY,CHF,AUD")
   .map((c) => c.trim())
   .filter(Boolean);
 
-const BASE = process.env.SETTLEMENT_CURRENCY ?? "USD";
+const SETTLEMENT_CURRENCY = process.env.SETTLEMENT_CURRENCY ?? "USD";
+
+const BASE = SETTLEMENT_CURRENCY;
+
+function resolveFxApiBaseCurrency(): string {
+  const configured = process.env.FX_API_BASE_CURRENCY?.trim();
+  if (configured) return configured;
+  if (SETTLEMENT_CURRENCY === "tUSD") return "USD";
+  return SETTLEMENT_CURRENCY;
+}
+
+const FX_API_BASE = resolveFxApiBaseCurrency();
 
 type FxApiResponse = {
   result?: string;
@@ -24,13 +35,15 @@ function buildFxApiUrl() {
   const configuredUrl = process.env.FX_API_URL?.trim();
   const apiKey = process.env.FX_API_KEY?.trim();
   if (configuredUrl && configuredUrl.includes("{API_KEY}") && apiKey) {
-    return configuredUrl.replace("{API_KEY}", apiKey).replace("{BASE}", BASE);
+    return configuredUrl
+      .replace("{API_KEY}", apiKey)
+      .replace("{BASE}", FX_API_BASE);
   }
   if (configuredUrl && !configuredUrl.includes("openexchangerates.org")) {
     return configuredUrl;
   }
   if (apiKey) {
-    return `https://v6.exchangerate-api.com/v6/${apiKey}/latest/${BASE}`;
+    return `https://v6.exchangerate-api.com/v6/${apiKey}/latest/${FX_API_BASE}`;
   }
   return configuredUrl!;
 }
@@ -59,12 +72,15 @@ export async function refreshFxRates() {
     const isOpenExchangeRates = url.includes("openexchangerates.org");
     const { data } = await axios.get<FxApiResponse>(url, {
       ...(isOpenExchangeRates
-        ? { params: { app_id: process.env.FX_API_KEY, base: BASE } }
+        ? { params: { app_id: process.env.FX_API_KEY, base: FX_API_BASE } }
         : {}),
     });
 
     if (data.result && data.result !== "success") {
-      throw new Error(`FX API returned result=${data.result}`);
+      const errorType = (data as { "error-type"?: string })["error-type"];
+      throw new Error(
+        `FX API returned result=${data.result}${errorType ? ` (${errorType})` : ""} for base ${FX_API_BASE}`,
+      );
     }
 
     const rates = extractRates(data);

@@ -107,6 +107,19 @@ export async function creditDeposit(params: {
 
   try {
     return await prisma.$transaction(async (tx) => {
+      const existing = await tx.balanceLedgerEntry.findUnique({
+        where: {
+          referenceType_referenceId: {
+            referenceType: "DEPOSIT",
+            referenceId: params.holdingContractId,
+          },
+        },
+      });
+      if (existing) {
+        const balance = await tx.partyBalance.findUnique({ where: { partyId: params.partyId } });
+        return balance ? toBalanceView(balance) : null;
+      }
+
       const balance = await tx.partyBalance.upsert({
         where: { partyId: params.partyId },
         update: { available: { increment: decimalAmount(params.amount) } },
@@ -135,7 +148,8 @@ export async function creditDeposit(params: {
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      return null;
+      const balance = await prisma.partyBalance.findUnique({ where: { partyId: params.partyId } });
+      return balance ? toBalanceView(balance) : null;
     }
     throw err;
   }
