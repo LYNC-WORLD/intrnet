@@ -4,7 +4,7 @@ import {
   getTokenConfig,
   TRANSFER_FACTORY_INTERFACE_ID,
 } from "../config/settlementToken";
-import { assertPositiveAmount, formatTokenAmount } from "../utils/amount";
+import { assertPositiveAmount, formatRegistryTokenAmount } from "../utils/amount";
 import { getTransferFactory, DisclosedContract } from "./registryClient";
 import { selectHoldingsForAmount } from "./holdingsService";
 
@@ -50,7 +50,7 @@ export async function executeTokenTransfer(params: {
   const transfer = {
     sender,
     receiver,
-    amount: formatTokenAmount(params.amount),
+    amount: formatRegistryTokenAmount(params.amount),
     instrumentId: { admin, id: config.instrumentId },
     lock: null,
     requestedAt: now.toISOString(),

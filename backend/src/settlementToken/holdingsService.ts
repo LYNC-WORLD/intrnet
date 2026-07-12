@@ -122,7 +122,7 @@ function pickHoldingsForAmount(
 ): { cids: string[]; total: number } | null {
   const singles = holdings
     .filter((holding) => holding.amount >= amount)
-    .sort((a, b) => a.amount - b.amount);
+    .sort((a, b) => b.amount - a.amount);
   if (singles.length > 0) {
     return { cids: [singles[0].contractId], total: singles[0].amount };
   }

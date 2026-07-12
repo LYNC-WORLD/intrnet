@@ -29,3 +29,8 @@ export function formatTokenAmount(amount: number): string {
   assertPositiveAmount(amount);
   return decimalAmount(amount).toFixed(8).replace(/\.?0+$/, "") || "0";
 }
+
+export function formatRegistryTokenAmount(amount: number): string {
+  assertPositiveAmount(amount);
+  return decimalAmount(amount).toFixed(10);
+}
