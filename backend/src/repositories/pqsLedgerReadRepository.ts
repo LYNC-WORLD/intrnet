@@ -1,5 +1,6 @@
 import { pqs } from "../db/pqs";
 import { T, pqsTemplateRef } from "../ledger/templateIds";
+import { FX_ORACLE_TARGET_CURRENCY } from "../utils/fxCurrency";
 import {
   PqsAgreement,
   PqsFxRate,
@@ -602,8 +603,15 @@ export async function listFxRates(fromCurrency?: string, toCurrency?: string): P
     args.push(fromCurrency);
   }
   if (toCurrency) {
-    conditions.push(`payload->>'toCurrency' = $${idx++}`);
-    args.push(toCurrency);
+    const normalized = toCurrency === "tUSD" ? "USD" : toCurrency;
+    if (normalized === FX_ORACLE_TARGET_CURRENCY) {
+      conditions.push(`payload->>'toCurrency' IN ($${idx}, $${idx + 1})`);
+      args.push(FX_ORACLE_TARGET_CURRENCY, "tUSD");
+      idx += 2;
+    } else {
+      conditions.push(`payload->>'toCurrency' = $${idx++}`);
+      args.push(normalized);
+    }
   }
 
   const where = wherePkg(conditions);

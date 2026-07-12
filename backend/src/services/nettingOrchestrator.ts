@@ -6,6 +6,10 @@ import {
   listAcceptedObligations,
 } from "../repositories/pqsLedgerReadRepository";
 import { auditLedgerExercise } from "./ledgerAudit";
+import {
+  dedupeFxRatesByFromCurrency,
+  oracleToCurrencyMatchesSettlement,
+} from "../utils/fxCurrency";
 
 async function markObligationsAsNetted(obligationCids: string[]) {
   if (obligationCids.length === 0) return;
@@ -78,9 +82,18 @@ export async function computeNetPositions(cycleCid: string, ackDeadline: string)
 
   const settlementCurrency = cycleContract.payload.settlementCurrency as string;
   const fxOracles = await client.query(T.FxRateOracle);
-  const fxRateCids = fxOracles
-    .filter((o) => o.payload.toCurrency === settlementCurrency)
-    .map((o) => encodeTuple2(o.payload.fromCurrency as string, o.contractId));
+  const eligible = fxOracles.filter((oracle) =>
+    oracleToCurrencyMatchesSettlement(oracle.payload.toCurrency as string, settlementCurrency),
+  );
+  const fxRateCids = dedupeFxRatesByFromCurrency(
+    eligible.map((oracle) => ({
+      contractId: oracle.contractId,
+      fromCurrency: oracle.payload.fromCurrency as string,
+      toCurrency: oracle.payload.toCurrency as string,
+      rate: Number(oracle.payload.rate),
+      asOf: new Date(oracle.payload.asOf as string),
+    })),
+  ).map((oracle) => encodeTuple2(oracle.fromCurrency, oracle.contractId));
 
   const result = await client.exercise({
     templateId: T.NettingCycle,
