@@ -167,10 +167,17 @@ function candidateKey(selection: SelectedHoldings): string {
 export async function enumerateHoldingCandidates(
   ownerPartyId: string,
   amount: number,
+  opts: { holdingContractIds?: string[] } = {},
 ): Promise<SelectedHoldings[]> {
   const allHoldings = await listTokenHoldings(ownerPartyId);
+  const allowedHoldingIds = opts.holdingContractIds
+    ? new Set(opts.holdingContractIds)
+    : null;
+  const eligibleHoldings = allowedHoldingIds
+    ? allHoldings.filter((holding) => allowedHoldingIds.has(holding.contractId))
+    : allHoldings;
   const configuredAdmin = process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim();
-  const groups = groupHoldingsByAdmin(allHoldings);
+  const groups = groupHoldingsByAdmin(eligibleHoldings);
   const candidates: SelectedHoldings[] = [];
   const seen = new Set<string>();
 

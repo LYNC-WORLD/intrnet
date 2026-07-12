@@ -59,6 +59,21 @@ export async function getSettlementTransferReference(instructionCid: string): Pr
   return entry?.referenceId ?? null;
 }
 
+export async function listDepositHoldingIdsForParty(partyId: string): Promise<string[]> {
+  const entries = await prisma.balanceLedgerEntry.findMany({
+    where: {
+      partyId,
+      referenceType: "DEPOSIT",
+      referenceId: { not: null },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return entries
+    .map((entry) => entry.referenceId)
+    .filter((referenceId): referenceId is string => Boolean(referenceId));
+}
+
 export async function recordSettlementTransfer(params: {
   payerPartyId: string;
   instructionCid: string;

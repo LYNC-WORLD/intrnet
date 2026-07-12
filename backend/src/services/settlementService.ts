@@ -8,6 +8,7 @@ import {
   getOrCreatePartyBalance,
   getPartyBalance,
   hasLedgerEntry,
+  listDepositHoldingIdsForParty,
   listPartyBalances,
   getSettlementTransferReference,
   recordSettlementTransfer,
@@ -134,9 +135,11 @@ export async function executeSettlement(contractId: string) {
       instruction.paymentReference;
 
     if (!paymentReference) {
+      const holdingContractIds = await listDepositHoldingIdsForParty(instruction.payer);
       const transfer = await executeTokenTransfer({
         receiverPartyId: instruction.receiver,
         amount: instruction.amount,
+        holdingContractIds,
         meta: {
           [SETTLEMENT_INSTRUCTION_META_KEY]: contractId,
         },

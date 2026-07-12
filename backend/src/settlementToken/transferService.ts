@@ -48,6 +48,7 @@ async function getFactoryForHoldingCandidate(params: {
 export async function executeTokenTransfer(params: {
   receiverPartyId: string;
   amount: number;
+  holdingContractIds?: string[];
   meta?: Record<string, string>;
 }): Promise<TransferResult> {
   assertPositiveAmount(params.amount, "Transfer amount");
@@ -60,11 +61,18 @@ export async function executeTokenTransfer(params: {
   const config = getTokenConfig();
   const sender = await getOperatorPartyId();
 
-  const candidates = await enumerateHoldingCandidates(sender, params.amount);
+  const candidates = await enumerateHoldingCandidates(sender, params.amount, {
+    holdingContractIds: params.holdingContractIds,
+  });
   let selected: SelectedHoldings;
   if (candidates.length > 0) {
     selected = candidates[0]!;
   } else {
+    if (params.holdingContractIds) {
+      throw new Error(
+        `No active ${config.instrumentId} custody holdings found for settlement payer deposits`,
+      );
+    }
     selected = await selectHoldingsForAmount(sender, params.amount);
   }
 
