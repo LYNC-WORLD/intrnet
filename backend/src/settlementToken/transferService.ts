@@ -57,7 +57,14 @@ export async function executeTokenTransfer(params: {
     meta: { values: params.meta ?? {} },
   };
 
-  const factory = await getTransferFactory({ expectedAdmin: admin, transfer });
+  const factory = await getTransferFactory({
+    expectedAdmin: admin,
+    transfer,
+    extraArgs: {
+      context: { values: {} },
+      meta: { values: {} },
+    },
+  });
 
   const choiceArgument = {
     expectedAdmin: admin,
