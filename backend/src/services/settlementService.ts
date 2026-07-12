@@ -13,10 +13,18 @@ import {
   recordSettlementTransfer,
   releaseReservedBalance,
   reserveBalance,
+  creditSettlementReceiver,
 } from "./balanceService";
 import { getTokenHoldingsTotal } from "../settlementToken/holdingsService";
 import { executeTokenTransfer } from "../settlementToken/transferService";
 import { getOperatorPartyId } from "../ledger/operatorParty";
+import {
+  acceptIncomingTransfer,
+  AcceptedIncomingTransfer,
+  findSettlementPendingTransfer,
+  listPendingIncomingTransfers,
+} from "../settlementToken/transferInstructionService";
+import { SETTLEMENT_INSTRUCTION_META_KEY } from "../settlementToken/metadata";
 import {
   getInstruction,
   listCycleIdsByAgreement,
@@ -131,6 +139,9 @@ export async function executeSettlement(contractId: string) {
       const transfer = await executeTokenTransfer({
         receiverPartyId: instruction.receiver,
         amount: instruction.amount,
+        meta: {
+          [SETTLEMENT_INSTRUCTION_META_KEY]: contractId,
+        },
       });
       paymentReference = transfer.paymentReference;
       await recordSettlementTransfer({
@@ -264,7 +275,12 @@ export async function failSettlement(contractId: string, reason?: string) {
   }
 }
 
-export async function confirmSettlement(contractId: string, token: string, partyId: string) {
+export async function confirmSettlement(
+  contractId: string,
+  token: string,
+  partyId: string,
+  createdBy?: string,
+) {
   const instruction = await getInstruction(contractId);
   if (!instruction) return { error: "Settlement instruction not found", status: 404 as const };
   if (instruction.receiver !== partyId) {
@@ -274,8 +290,44 @@ export async function confirmSettlement(contractId: string, token: string, party
     return { error: "Only EXECUTED settlement instructions can be confirmed", status: 400 as const };
   }
 
+  const custodyParty = await getOperatorPartyId();
+  const client = partyClient(token, partyId);
+  let transferAccepted: AcceptedIncomingTransfer | null = null;
+
   try {
-    const result = await partyClient(token, partyId).exercise({
+    if (!(await hasLedgerEntry(contractId, "CREDIT"))) {
+      const pending = await listPendingIncomingTransfers(partyId, client);
+      const match = findSettlementPendingTransfer(pending, {
+        instructionCid: contractId,
+        senderPartyId: custodyParty,
+        amount: instruction.amount,
+      });
+
+      if (match) {
+        try {
+          transferAccepted = await acceptIncomingTransfer(match, client);
+        } catch (acceptErr) {
+          if (!(await hasLedgerEntry(contractId, "PAYOUT"))) {
+            throw acceptErr;
+          }
+        }
+      } else if (!(await hasLedgerEntry(contractId, "PAYOUT"))) {
+        return {
+          error:
+            "No pending tUSD transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.",
+          status: 409 as const,
+        };
+      }
+
+      await creditSettlementReceiver({
+        receiverPartyId: partyId,
+        amount: instruction.amount,
+        instructionCid: contractId,
+        createdBy,
+      });
+    }
+
+    const result = await client.exercise({
       templateId: T.SettlementInstruction,
       contractId,
       choice: "ConfirmReceipt",
@@ -295,6 +347,7 @@ export async function confirmSettlement(contractId: string, token: string, party
     return {
       data: {
         newContractId,
+        transferAccepted,
         exerciseResult: result.exerciseResult,
         events: result.events,
       },

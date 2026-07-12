@@ -28,6 +28,7 @@ function toLedgerDisclosed(disclosed: DisclosedContract[]) {
 export async function executeTokenTransfer(params: {
   receiverPartyId: string;
   amount: number;
+  meta?: Record<string, string>;
 }): Promise<TransferResult> {
   assertPositiveAmount(params.amount, "Transfer amount");
 
@@ -53,7 +54,7 @@ export async function executeTokenTransfer(params: {
     requestedAt: now.toISOString(),
     executeBefore: executeBefore.toISOString(),
     inputHoldingCids,
-    meta: { values: {} },
+    meta: { values: params.meta ?? {} },
   };
 
   const factory = await getTransferFactory({ expectedAdmin: admin, transfer });

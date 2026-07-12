@@ -1,5 +1,7 @@
 const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
 
+export const SETTLEMENT_INSTRUCTION_META_KEY = "intrnet.netclear/settlementInstructionCid";
+
 const REFERENCE_META_KEYS = [
   "reference",
   "depositor",
@@ -72,6 +74,15 @@ function partyIdFromOptionalText(value: unknown): string | null {
       const trimmed = record.value.trim();
       return isPartyId(trimmed) ? trimmed : null;
     }
+  }
+  return null;
+}
+
+export function parseSettlementInstructionCidFromMeta(meta: unknown): string | null {
+  const values = parseMetaValues(meta);
+  const candidate = values[SETTLEMENT_INSTRUCTION_META_KEY];
+  if (typeof candidate === "string" && candidate.trim()) {
+    return candidate.trim();
   }
   return null;
 }

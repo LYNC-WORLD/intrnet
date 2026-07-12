@@ -55,7 +55,7 @@ export const confirm = asyncHandler(async (req: Request, res: Response) => {
     return res.status(403).json({ error: "User has no provisioned party id" });
   }
   const contractId = String(req.params.contractId);
-  const result = await settlementService.confirmSettlement(contractId, token, partyId);
+  const result = await settlementService.confirmSettlement(contractId, token, partyId, req.user.userId);
   if (isServiceError(result)) return sendServiceError(res, result);
   return res.json({ success: true, data: result.data });
 });

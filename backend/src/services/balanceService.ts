@@ -359,6 +359,73 @@ export async function finalizeSettlementBalances(params: {
   });
 }
 
+export async function creditSettlementReceiver(params: {
+  receiverPartyId: string;
+  amount: number;
+  instructionCid: string;
+  createdBy?: string;
+}): Promise<PartyBalanceView | null> {
+  assertPositiveAmount(params.amount, "Settlement amount");
+
+  const currency = getSettlementCurrency();
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const existingCredit = await tx.balanceLedgerEntry.findUnique({
+        where: {
+          instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "CREDIT" },
+        },
+      });
+      if (existingCredit) {
+        const balance = await tx.partyBalance.findUnique({ where: { partyId: params.receiverPartyId } });
+        return balance ? toBalanceView(balance) : null;
+      }
+
+      const debit = await tx.balanceLedgerEntry.findUnique({
+        where: {
+          instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "DEBIT" },
+        },
+      });
+      if (!debit) {
+        throw new Error("Settlement must be executed before receiver can confirm");
+      }
+
+      const updatedReceiver = await tx.partyBalance.upsert({
+        where: { partyId: params.receiverPartyId },
+        update: { available: { increment: decimalAmount(params.amount) } },
+        create: {
+          partyId: params.receiverPartyId,
+          available: decimalAmount(params.amount),
+          reserved: decimalAmount(0),
+          currency,
+        },
+      });
+
+      await tx.balanceLedgerEntry.create({
+        data: {
+          partyId: params.receiverPartyId,
+          entryType: "CREDIT",
+          amount: decimalAmount(params.amount),
+          currency,
+          referenceType: "SETTLEMENT_RECEIVE",
+          referenceId: params.instructionCid,
+          instructionCid: params.instructionCid,
+          createdBy: params.createdBy,
+          note: "Receiver accepted on-chain tUSD and confirmed settlement",
+        },
+      });
+
+      return toBalanceView(updatedReceiver);
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const balance = await prisma.partyBalance.findUnique({ where: { partyId: params.receiverPartyId } });
+      return balance ? toBalanceView(balance) : null;
+    }
+    throw err;
+  }
+}
+
 export async function releaseReservedBalance(params: {
   partyId: string;
   amount: number;

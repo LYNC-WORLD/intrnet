@@ -1,4 +1,4 @@
-import { operatorClient } from "../ledger/client";
+import { LedgerClient, operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
   getTokenConfig,
@@ -7,7 +7,10 @@ import {
 } from "../config/settlementToken";
 import { ExerciseEvents, extractExerciseContractId, matchesTemplate } from "../ledger/v2";
 import { parsePositiveAmount } from "../utils/amount";
-import { parseDepositorPartyFromInstructionPayload } from "./metadata";
+import {
+  parseDepositorPartyFromInstructionPayload,
+  parseSettlementInstructionCidFromMeta,
+} from "./metadata";
 import {
   extractCreatedHoldingCids,
   extractReceiverHoldingCidsFromExerciseResult,
@@ -23,6 +26,7 @@ export interface PendingIncomingTransfer {
   amount: number;
   instrumentId: string;
   depositorPartyId: string | null;
+  settlementInstructionCid: string | null;
 }
 
 export interface AcceptedIncomingTransfer {
@@ -40,6 +44,14 @@ export interface AcceptTransfersResult {
 }
 
 const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
+
+async function resolveLedgerClient(client?: LedgerClient): Promise<LedgerClient> {
+  return client ?? (await operatorClient());
+}
+
+function amountsMatch(left: number, right: number): boolean {
+  return Math.abs(left - right) < 0.00000001;
+}
 
 function toLedgerDisclosed(disclosed: DisclosedContract[]) {
   return disclosed.map((d) => ({
@@ -135,15 +147,35 @@ function extractReceiverHoldingCids(
   return [...cids];
 }
 
+export function findSettlementPendingTransfer(
+  pending: PendingIncomingTransfer[],
+  params: { instructionCid: string; senderPartyId: string; amount: number },
+): PendingIncomingTransfer | null {
+  const candidates = pending.filter(
+    (transfer) =>
+      transfer.sender === params.senderPartyId && amountsMatch(transfer.amount, params.amount),
+  );
+
+  const byInstruction = candidates.filter(
+    (transfer) => transfer.settlementInstructionCid === params.instructionCid,
+  );
+  if (byInstruction.length === 1) return byInstruction[0];
+  if (byInstruction.length > 1) return null;
+
+  if (candidates.length === 1) return candidates[0];
+  return null;
+}
+
 export async function listPendingIncomingTransfers(
   receiverPartyId?: string,
+  client?: LedgerClient,
 ): Promise<PendingIncomingTransfer[]> {
   const receiver = receiverPartyId ?? (await getOperatorPartyId());
   const { instrumentId } = getTokenConfig();
   const expectedAdmin = await resolveInstrumentAdmin();
   const enforceAdmin = shouldEnforceInstrumentAdmin();
-  const client = await operatorClient();
-  const contracts = await client.listInterfaceContracts(
+  const ledger = await resolveLedgerClient(client);
+  const contracts = await ledger.listInterfaceContracts(
     TRANSFER_INSTRUCTION_INTERFACE_ID,
     receiver,
   );
@@ -170,6 +202,10 @@ export async function listPendingIncomingTransfers(
     const amount = parsePositiveAmount(transfer.amount);
     if (amount === null) continue;
 
+    const settlementInstructionCid =
+      parseSettlementInstructionCidFromMeta(transfer.meta) ??
+      parseSettlementInstructionCidFromMeta(payload.meta);
+
     pending.push({
       contractId: contract.contractId,
       sender,
@@ -177,6 +213,7 @@ export async function listPendingIncomingTransfers(
       amount,
       instrumentId: instrument.id,
       depositorPartyId: parseDepositorPartyFromInstructionPayload(payload),
+      settlementInstructionCid,
     });
   }
 
@@ -185,10 +222,11 @@ export async function listPendingIncomingTransfers(
 
 export async function acceptIncomingTransfer(
   instruction: PendingIncomingTransfer,
+  client?: LedgerClient,
 ): Promise<AcceptedIncomingTransfer> {
   const context = await getTransferInstructionContext(instruction.contractId, "accept");
-  const client = await operatorClient();
-  const result = await client.exerciseWithDisclosed({
+  const ledger = await resolveLedgerClient(client);
+  const result = await ledger.exerciseWithDisclosed({
     templateId: TRANSFER_INSTRUCTION_INTERFACE_ID,
     contractId: instruction.contractId,
     choice: "TransferInstruction_Accept",
@@ -227,14 +265,15 @@ export async function acceptIncomingTransfer(
 
 export async function acceptPendingIncomingTransfers(
   receiverPartyId?: string,
+  client?: LedgerClient,
 ): Promise<AcceptTransfersResult> {
-  const pending = await listPendingIncomingTransfers(receiverPartyId);
+  const pending = await listPendingIncomingTransfers(receiverPartyId, client);
   const accepted: AcceptTransfersResult["accepted"] = [];
   const failed: AcceptTransfersResult["failed"] = [];
 
   for (const instruction of pending) {
     try {
-      accepted.push(await acceptIncomingTransfer(instruction));
+      accepted.push(await acceptIncomingTransfer(instruction, client));
     } catch (err) {
       failed.push({
         contractId: instruction.contractId,
