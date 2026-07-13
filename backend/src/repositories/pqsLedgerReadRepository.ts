@@ -1,5 +1,5 @@
 import { pqs } from "../db/pqs";
-import { T } from "../ledger/templateIds";
+import { T, pqsTemplateRef } from "../ledger/templateIds";
 import {
   PqsAgreement,
   PqsCashAccount,
@@ -186,7 +186,7 @@ export async function listAgreements(): Promise<PqsAgreement[]> {
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2
      ORDER BY payload->>'agreementId'`,
-    [T.NettingAgreement, packageId],
+    [pqsTemplateRef(T.NettingAgreement), packageId],
   );
   return rows.map(rowToAgreement);
 }
@@ -197,7 +197,7 @@ export async function getAgreementById(agreementId: string): Promise<PqsAgreemen
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND payload->>'agreementId' = $3
      LIMIT 1`,
-    [T.NettingAgreement, packageId, agreementId],
+    [pqsTemplateRef(T.NettingAgreement), packageId, agreementId],
   );
   return rows.length > 0 ? rowToAgreement(rows[0]) : null;
 }
@@ -208,7 +208,7 @@ export async function getAgreementContractId(agreementId: string): Promise<strin
     `SELECT contract_id FROM active($1)
      WHERE package_id = $2 AND payload->>'agreementId' = $3
      LIMIT 1`,
-    [T.NettingAgreement, packageId, agreementId],
+    [pqsTemplateRef(T.NettingAgreement), packageId, agreementId],
   );
   return rows.length > 0 ? (rows[0].contract_id as string) : null;
 }
@@ -229,7 +229,7 @@ async function findActiveObligationByKey(
        AND payload->>'agreementId' = $3
        AND payload->>'invoiceRef' = $4
      LIMIT 1`,
-    [T.Obligation, packageId, agreementId, invoiceRef],
+    [pqsTemplateRef(T.Obligation), packageId, agreementId, invoiceRef],
   );
   return rows.length > 0 ? rowToObligation(rows[0]) : null;
 }
@@ -240,7 +240,7 @@ export async function getObligation(contractId: string): Promise<PqsObligation |
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.Obligation, packageId, contractId],
+    [pqsTemplateRef(T.Obligation), packageId, contractId],
   );
   if (rows.length > 0) return rowToObligation(rows[0]);
   return getArchivedObligation(contractId);
@@ -254,7 +254,7 @@ export async function getArchivedObligation(contractId: string): Promise<PqsObli
      WHERE package_id = $2
        AND contract_id = $3
      LIMIT 1`,
-    [T.Obligation, packageId, contractId],
+    [pqsTemplateRef(T.Obligation), packageId, contractId],
   );
   if (rows.length === 0) return null;
 
@@ -298,11 +298,11 @@ async function listRejectedObligations(params: {
   const { conditions, args, nextIdx } = buildObligationFilterClauses({ ...params, status: "REJECTED" });
   conditions.push(`payload->>'status' = 'PENDING'`);
   const where = wherePkg(conditions);
-  const queryArgs = [T.Obligation, packageId, ...args, limit, offsetVal(page, limit)];
+  const queryArgs = [pqsTemplateRef(T.Obligation), packageId, ...args, limit, offsetVal(page, limit)];
 
   const countRes = await pqs.query(
     `SELECT COUNT(*) AS cnt FROM archives($1) ${where}`,
-    [T.Obligation, packageId, ...args],
+    [pqsTemplateRef(T.Obligation), packageId, ...args],
   );
   const total = parseInt(countRes.rows[0].cnt as string, 10);
 
@@ -345,11 +345,11 @@ export async function listObligations(params: {
   const { page, limit } = params;
   const { conditions, args, nextIdx } = buildObligationFilterClauses(params);
   const where = wherePkg(conditions);
-  const queryArgs = [T.Obligation, packageId, ...args, limit, offsetVal(page, limit)];
+  const queryArgs = [pqsTemplateRef(T.Obligation), packageId, ...args, limit, offsetVal(page, limit)];
 
   const countRes = await pqs.query(
     `SELECT COUNT(*) AS cnt FROM active($1) ${where}`,
-    [T.Obligation, packageId, ...args],
+    [pqsTemplateRef(T.Obligation), packageId, ...args],
   );
   const total = parseInt(countRes.rows[0].cnt as string, 10);
 
@@ -371,7 +371,7 @@ export async function listAcceptedObligations(agreementId: string): Promise<PqsO
      WHERE package_id = $2
        AND payload->>'agreementId' = $3
        AND payload->>'status' = 'ACCEPTED'`,
-    [T.Obligation, packageId, agreementId],
+    [pqsTemplateRef(T.Obligation), packageId, agreementId],
   );
   return rows.map((row) => rowToObligation(row));
 }
@@ -382,7 +382,7 @@ export async function getCycleByContractId(contractId: string): Promise<PqsNetti
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.NettingCycle, packageId, contractId],
+    [pqsTemplateRef(T.NettingCycle), packageId, contractId],
   );
   return rows.length > 0 ? rowToCycle(rows[0]) : null;
 }
@@ -402,7 +402,7 @@ export async function getCycleByCycleId(cycleId: string): Promise<PqsNettingCycl
   const { rows } = await pqs.query(
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND payload->>'cycleId' = $3`,
-    [T.NettingCycle, packageId, cycleId],
+    [pqsTemplateRef(T.NettingCycle), packageId, cycleId],
   );
   if (rows.length === 0) return null;
   const cycles = rows.map(rowToCycle);
@@ -418,7 +418,7 @@ export async function listCycles(params: {
   const { role, userAgreementId, agreementId } = params;
 
   const conditions: string[] = [];
-  const args: unknown[] = [T.NettingCycle, packageId];
+  const args: unknown[] = [pqsTemplateRef(T.NettingCycle), packageId];
   let idx = 3;
 
   if (role !== "operator" && userAgreementId) {
@@ -443,7 +443,7 @@ export async function listCycleIdsByAgreement(agreementId: string): Promise<stri
   const { rows } = await pqs.query(
     `SELECT payload->>'cycleId' AS cycle_id FROM active($1)
      WHERE package_id = $2 AND payload->>'agreementId' = $3`,
-    [T.NettingCycle, packageId, agreementId],
+    [pqsTemplateRef(T.NettingCycle), packageId, agreementId],
   );
   return rows.map((r: { cycle_id: string }) => r.cycle_id);
 }
@@ -454,7 +454,7 @@ export async function getPosition(contractId: string): Promise<PqsNetPosition | 
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.NetPosition, packageId, contractId],
+    [pqsTemplateRef(T.NetPosition), packageId, contractId],
   );
   return rows.length > 0 ? rowToPosition(rows[0]) : null;
 }
@@ -470,7 +470,7 @@ export async function listPositions(params: {
   const { partyId, role, cycleId, userAgreementId, agreementId } = params;
 
   const conditions: string[] = [];
-  const args: unknown[] = [T.NetPosition, packageId];
+  const args: unknown[] = [pqsTemplateRef(T.NetPosition), packageId];
   let idx = 3;
 
   if (role !== "operator") {
@@ -493,7 +493,7 @@ export async function listPositions(params: {
          WHERE package_id = $${cyclePackageArg} AND payload->>'agreementId' = $${agreementArg}
        )`,
     );
-    args.push(T.NettingCycle, packageId, filterAgreementId);
+    args.push(pqsTemplateRef(T.NettingCycle), packageId, filterAgreementId);
   }
 
   const where = wherePkg(conditions);
@@ -509,7 +509,7 @@ export async function getActivePositionsForCycle(
   status?: string,
 ): Promise<PqsNetPosition[]> {
   const packageId = pkg();
-  const args: unknown[] = [T.NetPosition, packageId, cycleId];
+  const args: unknown[] = [pqsTemplateRef(T.NetPosition), packageId, cycleId];
   let statusClause = "";
   if (status) {
     statusClause = `AND payload->>'status' = $4`;
@@ -529,7 +529,7 @@ export async function getInstruction(contractId: string): Promise<PqsSettlementI
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND contract_id = $3
      LIMIT 1`,
-    [T.SettlementInstruction, packageId, contractId],
+    [pqsTemplateRef(T.SettlementInstruction), packageId, contractId],
   );
   return rows.length > 0 ? rowToInstruction(rows[0]) : null;
 }
@@ -543,7 +543,7 @@ export async function listSettlementInstructions(params: {
   const { role, partyId, cycleIds } = params;
 
   const conditions: string[] = [];
-  const args: unknown[] = [T.SettlementInstruction, packageId];
+  const args: unknown[] = [pqsTemplateRef(T.SettlementInstruction), packageId];
   let idx = 3;
 
   if (cycleIds && cycleIds.length > 0) {
@@ -571,7 +571,7 @@ export async function getActiveInstructionsForCycle(cycleId: string): Promise<Pq
   const { rows } = await pqs.query(
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND payload->>'cycleId' = $3`,
-    [T.SettlementInstruction, packageId, cycleId],
+    [pqsTemplateRef(T.SettlementInstruction), packageId, cycleId],
   );
   return rows.map(rowToInstruction);
 }
@@ -582,14 +582,14 @@ export async function getCashAccount(owner: string, currency: string): Promise<P
     `SELECT contract_id, payload FROM active($1)
      WHERE package_id = $2 AND payload->>'owner' = $3 AND payload->>'currency' = $4
      LIMIT 1`,
-    [T.CashAccount, packageId, owner, currency],
+    [pqsTemplateRef(T.CashAccount), packageId, owner, currency],
   );
   return rows.length > 0 ? rowToCashAccount(rows[0]) : null;
 }
 
 export async function listCashAccounts(owner?: string): Promise<PqsCashAccount[]> {
   const packageId = pkg();
-  const args: unknown[] = [T.CashAccount, packageId];
+  const args: unknown[] = [pqsTemplateRef(T.CashAccount), packageId];
   const where = owner
     ? `WHERE package_id = $2 AND payload->>'owner' = $3`
     : "WHERE package_id = $2";
@@ -606,7 +606,7 @@ export async function listCashAccounts(owner?: string): Promise<PqsCashAccount[]
 export async function listFxRates(fromCurrency?: string, toCurrency?: string): Promise<PqsFxRate[]> {
   const packageId = pkg();
   const conditions: string[] = [];
-  const args: unknown[] = [T.FxRateOracle, packageId];
+  const args: unknown[] = [pqsTemplateRef(T.FxRateOracle), packageId];
   let idx = 3;
 
   if (fromCurrency) {
@@ -640,10 +640,10 @@ export async function pqsHealthCheck(): Promise<{
     const packageId = pkg();
     const countSql = `SELECT COUNT(*) AS cnt FROM active($1) WHERE package_id = $2`;
     const [agreements, cycles, obligations, accounts] = await Promise.all([
-      pqs.query(countSql, [T.NettingAgreement, packageId]),
-      pqs.query(countSql, [T.NettingCycle, packageId]),
-      pqs.query(countSql, [T.Obligation, packageId]),
-      pqs.query(countSql, [T.CashAccount, packageId]),
+      pqs.query(countSql, [pqsTemplateRef(T.NettingAgreement), packageId]),
+      pqs.query(countSql, [pqsTemplateRef(T.NettingCycle), packageId]),
+      pqs.query(countSql, [pqsTemplateRef(T.Obligation), packageId]),
+      pqs.query(countSql, [pqsTemplateRef(T.CashAccount), packageId]),
     ]);
     return {
       connected: true,

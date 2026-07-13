@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
-import { T } from "../ledger/templateIds";
+import { T, pqsTemplateRef } from "../ledger/templateIds";
 import { ValidatorCantonAdapter } from "../canton/validatorAdapter";
 import { slugify } from "../utils/crypto";
 import { isServiceError } from "../utils/http";
@@ -107,7 +107,7 @@ async function approveOnboardedUser(requestId: string, approverUserId: string, p
        WHERE package_id = $2
        ORDER BY created_effective_at ASC
        LIMIT 1`,
-    [T.NettingAgreement, packageId],
+    [pqsTemplateRef(T.NettingAgreement), packageId],
   );
   if (rows) {
     console.log(rows[0]);
