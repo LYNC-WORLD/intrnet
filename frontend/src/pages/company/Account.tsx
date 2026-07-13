@@ -1,10 +1,10 @@
 import {
   useMe,
-  useSettlementBalance,
   useSettlementInstructions,
   useFxRates,
+  useSettlementAccounts,
 } from "../../hooks/queries";
-import { SettlementInstruction, FxRate } from "../../types";
+import { SettlementInstruction, FxRate, CashAccount } from "../../types";
 import {
   Card,
   CardHeader,
@@ -20,7 +20,12 @@ import { fmt } from "../../utils";
 
 export default function Account() {
   const { data: profile, isLoading: loadingMe } = useMe();
-  const { data: account, isLoading: loadingBalance } = useSettlementBalance();
+  const { data: accountsData, isLoading: loadingAccounts } =
+    useSettlementAccounts();
+  const accounts: CashAccount[] = accountsData ?? [];
+  const account =
+    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
+
   const { data: historyData, isLoading: loadingHistory } =
     useSettlementInstructions({ status: "CONFIRMED" });
   const { data: ratesData, isLoading: loadingRates } = useFxRates();
@@ -29,7 +34,8 @@ export default function Account() {
     historyData?.instructions ?? historyData ?? [];
   const rates: FxRate[] = ratesData ?? [];
 
-  const loading = loadingMe || loadingBalance || loadingHistory || loadingRates;
+  const loading =
+    loadingMe || loadingAccounts || loadingHistory || loadingRates;
 
   if (loading) return <PageLoader />;
 
@@ -69,7 +75,7 @@ export default function Account() {
           </CardHeader>
           <CardBody>
             <p className="text-3xl font-bold text-bone-100">
-              {account ? fmt.currency(account.available, account.currency) : "—"}
+              {account ? fmt.currency(account.balance, account.currency) : "—"}
             </p>
             <p className="text-xs text-bone-700 mt-1">
               On-ledger settlement account

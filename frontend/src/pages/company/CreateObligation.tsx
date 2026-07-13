@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
+import { Check } from "lucide-react";
 import {
   useParticipants,
   useFxRates,
   useAgreement,
   useCreateObligation,
-  useSettlementBalance,
+  useSettlementAccounts,
 } from "../../hooks/queries";
-import { Participant } from "../../types";
+import { Participant, CashAccount } from "../../types";
 import {
   Card,
   CardBody,
@@ -33,7 +34,8 @@ export default function CreateObligation() {
   const { data: agreementData, isLoading: loadingAgreement } = useAgreement(
     user?.agreementId ?? undefined,
   );
-  const { data: balance, isLoading: loadingBalance } = useSettlementBalance();
+  const { data: accountsData, isLoading: loadingAccounts } =
+    useSettlementAccounts();
   const createMutation = useCreateObligation();
 
   const [success, setSuccess] = useState<string | null>(null);
@@ -51,13 +53,17 @@ export default function CreateObligation() {
   );
   const rates = ratesData ?? [];
 
+  const accounts: CashAccount[] = accountsData ?? [];
+  const balance =
+    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
+
   const estimatedUsd =
     form.amount && !isNaN(Number(form.amount))
       ? convertToUSD(Number(form.amount), form.currency, rates)
       : null;
 
   const exceedsBalance =
-    balance != null && estimatedUsd != null && estimatedUsd > balance.available;
+    balance != null && estimatedUsd != null && estimatedUsd > balance.balance;
 
   const valid =
     form.receiver &&
@@ -93,13 +99,13 @@ export default function CreateObligation() {
   };
 
   const loading =
-    loadingParticipants || loadingRates || loadingAgreement || loadingBalance;
+    loadingParticipants || loadingRates || loadingAgreement || loadingAccounts;
   if (loading) return <PageLoader />;
 
   if (success) {
     return (
       <div className="max-w-lg mx-auto text-center py-16">
-        <div className="text-5xl mb-4">✅</div>
+        <Check className="h-[40px] w-[40px] mb-4 mx-auto" />
         <h2 className="text-xl font-semibold text-bone-100 mb-2">
           Obligation created
         </h2>
@@ -198,9 +204,7 @@ export default function CreateObligation() {
                   <>
                     {" "}
                     · Available balance:{" "}
-                    <span title="Total balance minus any funds reserved for other pending obligations">
-                      {fmt.currency(balance.available, balance.currency)}
-                    </span>
+                    {fmt.currency(balance.balance, balance.currency)}
                   </>
                 )}
               </p>
@@ -208,16 +212,9 @@ export default function CreateObligation() {
 
             {exceedsBalance && (
               <Alert type="error">
-                <strong>Insufficient available balance.</strong> This obligation
-                exceeds your available balance of{" "}
-                {fmt.currency(balance!.available, balance!.currency)}
-                {balance!.reserved > 0 && (
-                  <>
-                    {" "}
-                    ({fmt.currency(balance!.reserved, balance!.currency)} is
-                    currently reserved for other pending obligations).
-                  </>
-                )}
+                <strong>Insufficient balance.</strong> This obligation exceeds
+                your available balance of{" "}
+                {fmt.currency(balance!.balance, balance!.currency)}.
               </Alert>
             )}
 

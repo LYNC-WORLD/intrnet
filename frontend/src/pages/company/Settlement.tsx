@@ -2,11 +2,11 @@ import { useState } from "react";
 import toast from "react-hot-toast";
 import {
   useSettlementInstructions,
-  useSettlementBalance,
+  useSettlementAccounts,
   useExecuteSettlement,
   useConfirmSettlement,
 } from "../../hooks/queries";
-import { SettlementInstruction } from "../../types";
+import { SettlementInstruction, CashAccount } from "../../types";
 import {
   Card,
   CardBody,
@@ -24,7 +24,7 @@ import {
 import { fmt } from "../../utils";
 import { useAuth } from "@/context/AuthContext";
 
-const LOW_BALANCE_THRESHOLD = Number(50000);
+const LOW_BALANCE_THRESHOLD = Number(50);
 
 const TABS = [
   { key: "pay", label: "I Need to Pay" },
@@ -39,7 +39,12 @@ export default function Settlement() {
     useState<SettlementInstruction | null>(null);
 
   const { data: instructionsData, isLoading } = useSettlementInstructions();
-  const { data: balance } = useSettlementBalance();
+  const { data: accountsData } = useSettlementAccounts();
+  const accounts: CashAccount[] = Array.isArray(accountsData)
+    ? accountsData
+    : [];
+  const balance =
+    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
   const executeMutation = useExecuteSettlement();
   const confirmMutation = useConfirmSettlement();
 
@@ -82,7 +87,7 @@ export default function Settlement() {
 
   const balanceAfter =
     balance && modalInstruction
-      ? balance.available - modalInstruction.amount
+      ? balance.balance - modalInstruction.amount
       : null;
   const isLow = balanceAfter !== null && balanceAfter < LOW_BALANCE_THRESHOLD;
 
@@ -235,7 +240,7 @@ export default function Settlement() {
                 <span className="text-bone-500">Current balance</span>
                 <span className="font-medium text-bone-100">
                   {balance
-                    ? fmt.currency(balance.available, balance.currency)
+                    ? fmt.currency(balance.balance, balance.currency)
                     : "—"}
                 </span>
               </div>
