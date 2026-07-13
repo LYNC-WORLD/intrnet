@@ -558,10 +558,11 @@ export async function getArchivedInstruction(contractId: string): Promise<PqsSet
   return rows.length > 0 ? rowToInstruction(rows[0]) : null;
 }
 
-export async function findExecutedSettlementInstruction(params: {
+async function findSettlementInstructionByStatus(params: {
   cycleId: string;
   payer: string;
   receiver: string;
+  status: string;
   paymentReference?: string | null;
 }): Promise<PqsSettlementInstruction | null> {
   const packageId = pkg();
@@ -571,7 +572,7 @@ export async function findExecutedSettlementInstruction(params: {
     params.cycleId,
     params.payer,
     params.receiver,
-    "EXECUTED",
+    params.status,
   ];
   let sql = `SELECT contract_id, payload, created_effective_at FROM active($1)
      WHERE package_id = $2
@@ -586,6 +587,56 @@ export async function findExecutedSettlementInstruction(params: {
   sql += ` ORDER BY created_effective_at DESC LIMIT 1`;
   const { rows } = await pqs.query(sql, args);
   return rows.length > 0 ? rowToInstruction(rows[0]) : null;
+}
+
+export async function findExecutedSettlementInstruction(params: {
+  cycleId: string;
+  payer: string;
+  receiver: string;
+  paymentReference?: string | null;
+}): Promise<PqsSettlementInstruction | null> {
+  return findSettlementInstructionByStatus({ ...params, status: "EXECUTED" });
+}
+
+export async function findConfirmedSettlementInstruction(params: {
+  cycleId: string;
+  payer: string;
+  receiver: string;
+  paymentReference?: string | null;
+}): Promise<PqsSettlementInstruction | null> {
+  return findSettlementInstructionByStatus({ ...params, status: "CONFIRMED" });
+}
+
+const SETTLEMENT_STATUS_RANK: Record<string, number> = {
+  CONFIRMED: 4,
+  EXECUTED: 3,
+  PENDING: 2,
+  FAILED: 1,
+};
+
+function dedupeSettlementInstructions(
+  instructions: PqsSettlementInstruction[],
+): PqsSettlementInstruction[] {
+  const byKey = new Map<string, PqsSettlementInstruction>();
+  for (const instruction of instructions) {
+    const key = `${instruction.cycleId}:${instruction.payer}:${instruction.receiver}:${instruction.amount}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, instruction);
+      continue;
+    }
+    const nextRank = SETTLEMENT_STATUS_RANK[instruction.status] ?? 0;
+    const existingRank = SETTLEMENT_STATUS_RANK[existing.status] ?? 0;
+    if (
+      nextRank > existingRank ||
+      (nextRank === existingRank && instruction.createdAt > existing.createdAt)
+    ) {
+      byKey.set(key, instruction);
+    }
+  }
+  return Array.from(byKey.values()).sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+  );
 }
 
 export async function listSettlementInstructions(params: {
@@ -621,7 +672,7 @@ export async function listSettlementInstructions(params: {
      ORDER BY created_effective_at DESC`,
     args,
   );
-  return rows.map(rowToInstruction);
+  return dedupeSettlementInstructions(rows.map(rowToInstruction));
 }
 
 export async function getActiveInstructionsForCycle(cycleId: string): Promise<PqsSettlementInstruction[]> {

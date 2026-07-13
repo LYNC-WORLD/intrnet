@@ -36,6 +36,7 @@ export interface DepositReconcileResult {
   staleRevoked: Array<{ partyId: string; amount: number; holdingContractId: string }>;
   alreadyApplied: number;
   skippedUnknownParty: Array<{ partyId: string; amount: number; holdingContractId: string }>;
+  settlementsRepaired: string[];
 }
 
 async function creditDepositForParty(params: {
@@ -272,6 +273,17 @@ export async function reconcileDeposits(createdBy?: string): Promise<DepositReco
   const recordedDepositCreditsTotal = await sumRecordedDepositCredits();
   const attributedOnChainTotal = onChainCustodyTotal - unattributedOnChainTotal;
 
+  let settlementsRepaired: string[] = [];
+  try {
+    const { repairUnsettledSettlementReserves } = await import("../services/settlementService");
+    settlementsRepaired = await repairUnsettledSettlementReserves({ createdBy });
+  } catch (err) {
+    console.warn(
+      "Settlement balance repair during deposit sync failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   return {
     custodyParty,
     transfersAccepted,
@@ -285,5 +297,6 @@ export async function reconcileDeposits(createdBy?: string): Promise<DepositReco
     staleRevoked,
     alreadyApplied,
     skippedUnknownParty,
+    settlementsRepaired,
   };
 }

@@ -5,6 +5,7 @@ import { toConflictError } from "../utils/http";
 import { currenciesMatchForSettlement, getSettlementCurrency } from "../config/settlementToken";
 import {
   finalizeSettlementBalances,
+  findUnsettledReserveCids,
   getOrCreatePartyBalance,
   getPartyBalance,
   hasLedgerEntry,
@@ -29,12 +30,14 @@ import {
 } from "../settlementToken/transferInstructionService";
 import { SETTLEMENT_INSTRUCTION_META_KEY } from "../settlementToken/metadata";
 import {
+  findConfirmedSettlementInstruction,
   findExecutedSettlementInstruction,
   getArchivedInstruction,
   getInstruction,
   listCycleIdsByAgreement,
   listSettlementInstructions as pqsListInstructions,
 } from "../repositories/pqsLedgerReadRepository";
+import type { PqsSettlementInstruction } from "../types/ledger";
 import { auditLedgerExercise } from "./ledgerAudit";
 
 export interface SettlementBalanceView {
@@ -47,6 +50,91 @@ export interface SettlementBalanceView {
 }
 
 type ExecutePhase = "none" | "reserved" | "transferred" | "attested" | "finalized";
+
+async function loadSettlementInstructionForBookkeeping(
+  bookkeepingCid: string,
+  paymentReference?: string | null,
+): Promise<PqsSettlementInstruction | null> {
+  const paymentRef =
+    paymentReference?.trim() ?? (await getSettlementTransferReference(bookkeepingCid));
+
+  const active = await getInstruction(bookkeepingCid);
+  if (active && (active.status === "EXECUTED" || active.status === "CONFIRMED")) {
+    return active;
+  }
+
+  const archived = (await getArchivedInstruction(bookkeepingCid)) ?? active;
+  if (!archived) return active;
+
+  const lookup = {
+    cycleId: archived.cycleId,
+    payer: archived.payer,
+    receiver: archived.receiver,
+    paymentReference: archived.paymentReference ?? paymentRef,
+  };
+
+  const confirmed = await findConfirmedSettlementInstruction(lookup);
+  if (confirmed) return confirmed;
+
+  const executed = await findExecutedSettlementInstruction(lookup);
+  if (executed) return executed;
+
+  return active ?? archived;
+}
+
+export async function ensureSettlementFinalized(
+  bookkeepingCid: string,
+  paymentReference?: string | null,
+  createdBy?: string,
+): Promise<boolean> {
+  if (await hasLedgerEntry(bookkeepingCid, "DEBIT")) return true;
+  if (!(await hasLedgerEntry(bookkeepingCid, "TRANSFER"))) return false;
+
+  const instruction = await loadSettlementInstructionForBookkeeping(
+    bookkeepingCid,
+    paymentReference,
+  );
+  if (!instruction) return false;
+  if (instruction.status !== "EXECUTED" && instruction.status !== "CONFIRMED") {
+    return false;
+  }
+
+  await finalizeSettlementBalances({
+    payerPartyId: instruction.payer,
+    receiverPartyId: instruction.receiver,
+    amount: instruction.amount,
+    instructionCid: bookkeepingCid,
+    creditReceiver: false,
+    createdBy,
+  });
+  return true;
+}
+
+export async function repairUnsettledSettlementReserves(params?: {
+  partyId?: string;
+  createdBy?: string;
+}): Promise<string[]> {
+  const unsettled = await findUnsettledReserveCids(params?.partyId);
+  const repaired: string[] = [];
+
+  for (const reserve of unsettled) {
+    try {
+      const finalized = await ensureSettlementFinalized(
+        reserve.instructionCid,
+        undefined,
+        params?.createdBy,
+      );
+      if (finalized) repaired.push(reserve.instructionCid);
+    } catch (err) {
+      console.warn(
+        `Failed to repair unsettled reserve for ${reserve.instructionCid}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return repaired;
+}
 
 export async function listSettlementInstructions(
   role: string,
@@ -70,6 +158,15 @@ export async function getSettlementBalance(
   role: string,
   partyId: string,
 ): Promise<SettlementBalanceView> {
+  try {
+    await repairUnsettledSettlementReserves({ partyId });
+  } catch (err) {
+    console.warn(
+      `Settlement balance repair skipped for ${partyId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   const balance = await getOrCreatePartyBalance(partyId, 0);
   let holdingsTotal: number | null = null;
 
@@ -105,16 +202,8 @@ export async function listSettlementBalances(role: string, partyId: string) {
 }
 
 export async function executeSettlement(contractId: string) {
-  const transferRecorded = await hasLedgerEntry(contractId, "TRANSFER");
-  const alreadyFinalized = await hasLedgerEntry(contractId, "DEBIT");
-
-  if (alreadyFinalized) {
-    return { error: "Settlement balances already finalized for this instruction", status: 409 as const };
-  }
-
   let instruction =
-    (await getInstruction(contractId)) ??
-    (transferRecorded ? await getArchivedInstruction(contractId) : null);
+    (await getInstruction(contractId)) ?? (await getArchivedInstruction(contractId));
   if (!instruction) {
     return { error: "Settlement instruction not found", status: 404 as const };
   }
@@ -128,17 +217,32 @@ export async function executeSettlement(contractId: string) {
   }
 
   let paymentReference =
-    (await getSettlementTransferReference(contractId)) ?? instruction.paymentReference;
+    instruction.paymentReference ?? (await getSettlementTransferReference(contractId));
+
+  const bookkeepingCid = await resolveSettlementBookkeepingCid(
+    contractId,
+    paymentReference,
+    { payer: instruction.payer, amount: instruction.amount },
+  );
+  paymentReference =
+    paymentReference ?? (await getSettlementTransferReference(bookkeepingCid));
+
+  const transferRecorded = await hasLedgerEntry(bookkeepingCid, "TRANSFER");
+  const alreadyFinalized = await hasLedgerEntry(bookkeepingCid, "DEBIT");
+
+  if (alreadyFinalized) {
+    return { error: "Settlement balances already finalized for this instruction", status: 409 as const };
+  }
 
   const executedInstruction =
-  instruction.status === "EXECUTED"
-    ? instruction
-    : await findExecutedSettlementInstruction({
-        cycleId: instruction.cycleId,
-        payer: instruction.payer,
-        receiver: instruction.receiver,
-        paymentReference,
-      });
+    instruction.status === "EXECUTED"
+      ? instruction
+      : await findExecutedSettlementInstruction({
+          cycleId: instruction.cycleId,
+          payer: instruction.payer,
+          receiver: instruction.receiver,
+          paymentReference,
+        });
 
   const resumeAfterTransfer = transferRecorded || executedInstruction !== null;
   const attestedOnLedger = executedInstruction !== null;
@@ -147,12 +251,18 @@ export async function executeSettlement(contractId: string) {
     return { error: "Only PENDING settlement instructions can be executed", status: 400 as const };
   }
 
+  const pendingInstruction =
+    (await getInstruction(bookkeepingCid)) ??
+    (instruction.status === "PENDING" ? instruction : null);
+  const attestContractId =
+    pendingInstruction?.status === "PENDING" ? pendingInstruction.contractId : bookkeepingCid;
+
   let phase: ExecutePhase = transferRecorded ? "transferred" : "none";
   let attestResult: {
     exerciseResult: unknown;
     events: Array<Record<string, unknown>>;
   } | null = null;
-  let activeContractId = executedInstruction?.contractId ?? contractId;
+  let activeContractId = executedInstruction?.contractId ?? attestContractId;
 
   try {
     if (!transferRecorded) {
@@ -168,7 +278,7 @@ export async function executeSettlement(contractId: string) {
       await reserveBalance({
         partyId: instruction.payer,
         amount: instruction.amount,
-        instructionCid: contractId,
+        instructionCid: bookkeepingCid,
       });
       phase = "reserved";
 
@@ -177,15 +287,16 @@ export async function executeSettlement(contractId: string) {
         const transfer = await executeTokenTransfer({
           receiverPartyId: instruction.receiver,
           amount: instruction.amount,
-          holdingContractIds,
+          holdingContractIds:
+            holdingContractIds.length > 0 ? holdingContractIds : undefined,
           meta: {
-            [SETTLEMENT_INSTRUCTION_META_KEY]: contractId,
+            [SETTLEMENT_INSTRUCTION_META_KEY]: bookkeepingCid,
           },
         });
         paymentReference = transfer.paymentReference;
         await recordSettlementTransfer({
           payerPartyId: instruction.payer,
-          instructionCid: contractId,
+          instructionCid: bookkeepingCid,
           paymentReference,
           amount: instruction.amount,
         });
@@ -200,7 +311,7 @@ export async function executeSettlement(contractId: string) {
       const client = await operatorClient();
       const result = await client.exercise({
         templateId: T.SettlementInstruction,
-        contractId,
+        contractId: attestContractId,
         choice: "AttestPayment",
         argument: {
           paymentUpdateId: paymentReference,
@@ -209,7 +320,12 @@ export async function executeSettlement(contractId: string) {
       phase = "attested";
       attestResult = result;
 
-      await auditLedgerExercise(T.SettlementInstruction, "AttestPayment", contractId, result.events);
+      await auditLedgerExercise(
+        T.SettlementInstruction,
+        "AttestPayment",
+        attestContractId,
+        result.events,
+      );
 
       const newContractId = extractRecreatedContractId(
         result.exerciseResult,
@@ -227,7 +343,7 @@ export async function executeSettlement(contractId: string) {
       payerPartyId: instruction.payer,
       receiverPartyId: instruction.receiver,
       amount: instruction.amount,
-      instructionCid: contractId,
+      instructionCid: bookkeepingCid,
       creditReceiver: false,
     });
     phase = "finalized";
@@ -239,6 +355,7 @@ export async function executeSettlement(contractId: string) {
         exerciseResult: attestResult?.exerciseResult ?? null,
         events: attestResult?.events ?? [],
         resumed: resumeAfterTransfer,
+        bookkeepingCid,
       },
     };
   } catch (err) {
@@ -247,12 +364,12 @@ export async function executeSettlement(contractId: string) {
         await releaseReservedBalance({
           partyId: instruction.payer,
           amount: instruction.amount,
-          instructionCid: contractId,
+          instructionCid: bookkeepingCid,
           note: err instanceof Error ? err.message : "Execute failed",
         });
       } catch (releaseErr) {
         console.error(
-          `Failed to release reserved balance for ${contractId}:`,
+          `Failed to release reserved balance for ${bookkeepingCid}:`,
           releaseErr instanceof Error ? releaseErr.message : releaseErr,
         );
       }
@@ -357,6 +474,34 @@ export async function confirmSettlement(
     return { error: "Only receiver can confirm this settlement", status: 403 as const };
   }
 
+  if (instruction.status === "CONFIRMED") {
+    const paymentReference =
+      instruction.paymentReference ?? (await getSettlementTransferReference(contractId));
+    const bookkeepingCid = await resolveSettlementBookkeepingCid(
+      contractId,
+      paymentReference,
+      { payer: instruction.payer, amount: instruction.amount },
+    );
+    if (!(await hasLedgerEntry(bookkeepingCid, "CREDIT"))) {
+      await ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
+      await creditSettlementReceiver({
+        receiverPartyId: partyId,
+        amount: instruction.amount,
+        instructionCid: bookkeepingCid,
+        createdBy,
+      });
+    }
+    return {
+      data: {
+        newContractId: activeContractId,
+        transferAccepted: null,
+        exerciseResult: null,
+        events: [],
+        alreadyConfirmed: true,
+      },
+    };
+  }
+
   if (instruction.status !== "EXECUTED") {
     const executed = await findExecutedSettlementInstruction({
       cycleId: instruction.cycleId,
@@ -379,7 +524,17 @@ export async function confirmSettlement(
   const bookkeepingCid = await resolveSettlementBookkeepingCid(
     contractId,
     paymentReference,
+    { payer: instruction.payer, amount: instruction.amount },
   );
+
+  try {
+    await ensureSettlementFinalized(bookkeepingCid, paymentReference);
+  } catch (err) {
+    console.warn(
+      `Pre-confirm finalize skipped for ${bookkeepingCid}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 
   const custodyParty = await getOperatorPartyId();
   const client = partyClient(token, partyId);
@@ -408,17 +563,14 @@ export async function confirmSettlement(
           }
         }
       } else if (!hasPayout && !hasDebit) {
-        return {
-          error:
-            `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
-          status: 409 as const,
-        };
-      } else if (!hasDebit) {
-        return {
-          error:
-            "Settlement transfer was sent but operator execute did not finalize balances. Ask the operator to retry execute before confirming.",
-          status: 409 as const,
-        };
+        const finalized = await ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
+        if (!finalized) {
+          return {
+            error:
+              `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
+            status: 409 as const,
+          };
+        }
       }
 
       await creditSettlementReceiver({

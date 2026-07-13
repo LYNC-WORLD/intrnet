@@ -273,16 +273,22 @@ export async function executeTokenTransfer(params: {
   const config = getTokenConfig();
   const sender = await getOperatorPartyId();
 
+  const depositHoldingFilter =
+    params.holdingContractIds && params.holdingContractIds.length > 0
+      ? params.holdingContractIds
+      : undefined;
+
   const candidates = await enumerateHoldingCandidates(sender, params.amount, {
-    holdingContractIds: params.holdingContractIds,
+    holdingContractIds: depositHoldingFilter,
   });
   let fallback: SelectedHoldings;
   if (candidates.length > 0) {
     fallback = candidates[0]!;
   } else {
-    if (params.holdingContractIds) {
+    if (depositHoldingFilter) {
       throw new Error(
-        `No active ${config.instrumentId} custody holdings found for settlement payer deposits`,
+        `No active ${config.instrumentId} custody holdings found for settlement payer deposits. ` +
+          "Deposits may have been spent or revoked — run deposit sync and ensure the payer has credited active holdings before execute.",
       );
     }
     fallback = await selectHoldingsForAmount(sender, params.amount);

@@ -61,9 +61,35 @@ export async function getSettlementTransferReference(instructionCid: string): Pr
   return entry?.referenceId ?? null;
 }
 
+export async function findUnsettledReserveCids(
+  partyId?: string,
+): Promise<Array<{ instructionCid: string; partyId: string; amount: number }>> {
+  const reserves = await prisma.balanceLedgerEntry.findMany({
+    where: {
+      entryType: "RESERVE",
+      instructionCid: { not: null },
+      ...(partyId ? { partyId } : {}),
+    },
+    select: { instructionCid: true, partyId: true, amount: true },
+  });
+
+  const unsettled: Array<{ instructionCid: string; partyId: string; amount: number }> = [];
+  for (const reserve of reserves) {
+    if (!reserve.instructionCid) continue;
+    if (await hasLedgerEntry(reserve.instructionCid, "DEBIT")) continue;
+    unsettled.push({
+      instructionCid: reserve.instructionCid,
+      partyId: reserve.partyId,
+      amount: toNumber(reserve.amount),
+    });
+  }
+  return unsettled;
+}
+
 export async function resolveSettlementBookkeepingCid(
   contractId: string,
   paymentReference?: string | null,
+  hint?: { payer: string; amount: number },
 ): Promise<string> {
   if (
     (await hasLedgerEntry(contractId, "TRANSFER")) ||
@@ -93,6 +119,18 @@ export async function resolveSettlementBookkeepingCid(
     select: { instructionCid: true },
   });
   if (linkedEntry?.instructionCid) return linkedEntry.instructionCid;
+
+  if (hint) {
+    const unsettled = await findUnsettledReserveCids(hint.payer);
+    const matches = unsettled.filter((entry) => entry.amount === hint.amount);
+    if (matches.length === 1) return matches[0].instructionCid;
+    if (matches.length > 1 && paymentRef) {
+      for (const match of matches) {
+        const ref = await getSettlementTransferReference(match.instructionCid);
+        if (ref === paymentRef) return match.instructionCid;
+      }
+    }
+  }
 
   return contractId;
 }
