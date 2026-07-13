@@ -7,14 +7,9 @@ import {
   usePositions,
   useAcceptObligation,
   useRejectObligation,
-  useSettlementAccounts,
+  useSettlementBalance,
 } from "../../hooks/queries";
-import {
-  NetPosition,
-  NettingCycle,
-  Obligation,
-  CashAccount,
-} from "../../types";
+import { NetPosition, NettingCycle, Obligation } from "../../types";
 import {
   KpiCard,
   Card,
@@ -41,12 +36,7 @@ export default function Dashboard() {
     limit: 1,
   });
   const { data: positionsData } = usePositions();
-  const { data: accountsData } = useSettlementAccounts();
-  const accounts: CashAccount[] = Array.isArray(accountsData)
-    ? accountsData
-    : [];
-  const balance =
-    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
+  const { data: balance } = useSettlementBalance();
   const { data: cyclesData } = useCycles();
 
   const acceptMutation = useAcceptObligation();
@@ -146,9 +136,7 @@ export default function Dashboard() {
         />
         <KpiCard
           label="Cash Balance"
-          value={
-            balance ? fmt.currency(balance.balance, balance.currency) : "—"
-          }
+          value={balance ? fmt.currency(balance.total, balance.currency) : "—"}
           sub="On-ledger account"
         />
       </div>

@@ -7,9 +7,9 @@ import {
   useFxRates,
   useAgreement,
   useCreateObligation,
-  useSettlementAccounts,
+  useSettlementBalance,
 } from "../../hooks/queries";
-import { Participant, CashAccount } from "../../types";
+import { Participant } from "../../types";
 import {
   Card,
   CardBody,
@@ -34,8 +34,7 @@ export default function CreateObligation() {
   const { data: agreementData, isLoading: loadingAgreement } = useAgreement(
     user?.agreementId ?? undefined,
   );
-  const { data: accountsData, isLoading: loadingAccounts } =
-    useSettlementAccounts();
+  const { data: balance, isLoading: loadingBalance } = useSettlementBalance();
   const createMutation = useCreateObligation();
 
   const [success, setSuccess] = useState<string | null>(null);
@@ -53,17 +52,13 @@ export default function CreateObligation() {
   );
   const rates = ratesData ?? [];
 
-  const accounts: CashAccount[] = accountsData ?? [];
-  const balance =
-    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
-
   const estimatedUsd =
     form.amount && !isNaN(Number(form.amount))
       ? convertToUSD(Number(form.amount), form.currency, rates)
       : null;
 
   const exceedsBalance =
-    balance != null && estimatedUsd != null && estimatedUsd > balance.balance;
+    balance != null && estimatedUsd != null && estimatedUsd > balance.total;
 
   const valid =
     form.receiver &&
@@ -99,7 +94,7 @@ export default function CreateObligation() {
   };
 
   const loading =
-    loadingParticipants || loadingRates || loadingAgreement || loadingAccounts;
+    loadingParticipants || loadingRates || loadingAgreement || loadingBalance;
   if (loading) return <PageLoader />;
 
   if (success) {
@@ -204,7 +199,7 @@ export default function CreateObligation() {
                   <>
                     {" "}
                     · Available balance:{" "}
-                    {fmt.currency(balance.balance, balance.currency)}
+                    {fmt.currency(balance.total, balance.currency)}
                   </>
                 )}
               </p>
@@ -214,7 +209,7 @@ export default function CreateObligation() {
               <Alert type="error">
                 <strong>Insufficient balance.</strong> This obligation exceeds
                 your available balance of{" "}
-                {fmt.currency(balance!.balance, balance!.currency)}.
+                {fmt.currency(balance!.total, balance!.currency)}.
               </Alert>
             )}
 

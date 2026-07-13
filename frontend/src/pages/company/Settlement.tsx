@@ -2,11 +2,11 @@ import { useState } from "react";
 import toast from "react-hot-toast";
 import {
   useSettlementInstructions,
-  useSettlementAccounts,
+  useSettlementBalance,
   useExecuteSettlement,
   useConfirmSettlement,
 } from "../../hooks/queries";
-import { SettlementInstruction, CashAccount } from "../../types";
+import { SettlementInstruction } from "../../types";
 import {
   Card,
   CardBody,
@@ -39,12 +39,7 @@ export default function Settlement() {
     useState<SettlementInstruction | null>(null);
 
   const { data: instructionsData, isLoading } = useSettlementInstructions();
-  const { data: accountsData } = useSettlementAccounts();
-  const accounts: CashAccount[] = Array.isArray(accountsData)
-    ? accountsData
-    : [];
-  const balance =
-    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
+  const { data: balance } = useSettlementBalance();
   const executeMutation = useExecuteSettlement();
   const confirmMutation = useConfirmSettlement();
 
@@ -87,7 +82,7 @@ export default function Settlement() {
 
   const balanceAfter =
     balance && modalInstruction
-      ? balance.balance - modalInstruction.amount
+      ? balance.total - modalInstruction.amount
       : null;
   const isLow = balanceAfter !== null && balanceAfter < LOW_BALANCE_THRESHOLD;
 
@@ -240,7 +235,7 @@ export default function Settlement() {
                 <span className="text-bone-500">Current balance</span>
                 <span className="font-medium text-bone-100">
                   {balance
-                    ? fmt.currency(balance.balance, balance.currency)
+                    ? fmt.currency(balance.total, balance.currency)
                     : "—"}
                 </span>
               </div>

@@ -146,6 +146,5 @@ export const settlementApi = {
   execute: (cid: string) =>
     api.post(`/api/settlement/instructions/${cid}/execute`, {}),
   confirm: (cid: string) => api.post(`/api/settlement/${cid}/confirm`, {}),
-  accounts: (params?: Record<string, string>) =>
-    api.get("/api/settlement/accounts", { params }),
+  balance: () => api.get("/api/settlement/balance"),
 };
