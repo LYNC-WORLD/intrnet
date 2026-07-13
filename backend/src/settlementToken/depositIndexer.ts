@@ -169,6 +169,12 @@ async function reconcileArchivedDepositCredits(params: {
     const result = await revokeStaleDepositCredit({
       holdingContractId,
       createdBy: params.createdBy,
+    }).catch((err) => {
+      console.warn(
+        `Skipped stale deposit revoke for ${holdingContractId}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return { revoked: false as const };
     });
     if (!result.revoked) continue;
 

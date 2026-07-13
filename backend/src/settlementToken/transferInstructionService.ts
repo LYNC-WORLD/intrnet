@@ -152,15 +152,21 @@ function extractReceiverHoldingCids(
 
 export function findSettlementPendingTransfer(
   pending: PendingIncomingTransfer[],
-  params: { instructionCid: string; senderPartyId: string; amount: number },
+  params: { instructionCid: string; senderPartyId: string; amount: number; alternateInstructionCids?: string[] },
 ): PendingIncomingTransfer | null {
+  const instructionIds = new Set(
+    [params.instructionCid, ...(params.alternateInstructionCids ?? [])].filter(Boolean),
+  );
+
   const candidates = pending.filter(
     (transfer) =>
       transfer.sender === params.senderPartyId && amountsMatch(transfer.amount, params.amount),
   );
 
   const byInstruction = candidates.filter(
-    (transfer) => transfer.settlementInstructionCid === params.instructionCid,
+    (transfer) =>
+      transfer.settlementInstructionCid !== null &&
+      instructionIds.has(transfer.settlementInstructionCid),
   );
   if (byInstruction.length === 1) return byInstruction[0];
   if (byInstruction.length > 1) return null;

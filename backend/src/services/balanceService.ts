@@ -61,6 +61,42 @@ export async function getSettlementTransferReference(instructionCid: string): Pr
   return entry?.referenceId ?? null;
 }
 
+export async function resolveSettlementBookkeepingCid(
+  contractId: string,
+  paymentReference?: string | null,
+): Promise<string> {
+  if (
+    (await hasLedgerEntry(contractId, "TRANSFER")) ||
+    (await hasLedgerEntry(contractId, "RESERVE")) ||
+    (await hasLedgerEntry(contractId, "DEBIT"))
+  ) {
+    return contractId;
+  }
+
+  const paymentRef =
+    paymentReference?.trim() ||
+    (await getSettlementTransferReference(contractId)) ||
+    null;
+  if (paymentRef) {
+    const transferEntry = await prisma.balanceLedgerEntry.findFirst({
+      where: { entryType: "TRANSFER", referenceId: paymentRef },
+      select: { instructionCid: true },
+    });
+    if (transferEntry?.instructionCid) return transferEntry.instructionCid;
+  }
+
+  const linkedEntry = await prisma.balanceLedgerEntry.findFirst({
+    where: {
+      instructionCid: contractId,
+      entryType: { in: ["RESERVE", "TRANSFER", "DEBIT", "PAYOUT", "CREDIT"] },
+    },
+    select: { instructionCid: true },
+  });
+  if (linkedEntry?.instructionCid) return linkedEntry.instructionCid;
+
+  return contractId;
+}
+
 function depositReversalReferenceId(holdingContractId: string): string {
   return `revoked:${holdingContractId}`;
 }
@@ -121,6 +157,24 @@ export async function listActiveDepositHoldingIdsForParty(partyId: string): Prom
   return activeRecorded;
 }
 
+export async function hasUnsettledReserve(partyId: string): Promise<boolean> {
+  const reserves = await prisma.balanceLedgerEntry.findMany({
+    where: { partyId, entryType: "RESERVE", instructionCid: { not: null } },
+    select: { instructionCid: true },
+  });
+
+  for (const reserve of reserves) {
+    if (!reserve.instructionCid) continue;
+    const debited = await prisma.balanceLedgerEntry.findUnique({
+      where: {
+        instructionCid_entryType: { instructionCid: reserve.instructionCid, entryType: "DEBIT" },
+      },
+    });
+    if (!debited) return true;
+  }
+  return false;
+}
+
 export async function revokeStaleDepositCredit(params: {
   holdingContractId: string;
   createdBy?: string;
@@ -160,20 +214,50 @@ export async function revokeStaleDepositCredit(params: {
     params.note ??
     `Reversed stale deposit credit for archived custody holding ${holdingContractId}`;
 
+  if (amount > 0 && (await hasUnsettledReserve(deposit.partyId))) {
+    const balance = await prisma.partyBalance.findUnique({ where: { partyId: deposit.partyId } });
+    const available = balance ? toNumber(balance.available) : 0;
+    if (available < amount) {
+      return { revoked: false, partyId: deposit.partyId, amount };
+    }
+  }
+
   await prisma.$transaction(async (tx) => {
-    const updated = await tx.partyBalance.updateMany({
-      where: {
-        partyId: deposit.partyId,
-        available: { gte: deposit.amount },
-      },
-      data: {
-        available: { decrement: deposit.amount },
-      },
-    });
-    if (updated.count === 0) {
-      throw new Error(
-        `Cannot revoke stale deposit ${holdingContractId}: insufficient available balance for ${deposit.partyId}`,
-      );
+    const balance = await tx.partyBalance.findUnique({ where: { partyId: deposit.partyId } });
+    if (!balance) {
+      throw new Error(`Cannot revoke stale deposit ${holdingContractId}: party balance not found`);
+    }
+
+    const available = toNumber(balance.available);
+    const reserved = toNumber(balance.reserved);
+    const total = available + reserved;
+    const fromAvailable = Math.min(available, amount);
+    const fromReserved = Math.min(reserved, amount - fromAvailable);
+
+    if (fromAvailable + fromReserved < amount) {
+      await tx.balanceLedgerEntry.create({
+        data: {
+          partyId: deposit.partyId,
+          entryType: "DEBIT",
+          amount: deposit.amount,
+          currency,
+          referenceType: "DEPOSIT_REVERSAL",
+          referenceId: reversalReferenceId,
+          createdBy: params.createdBy,
+          note: `${note} (balance already adjusted)`,
+        },
+      });
+      return;
+    }
+
+    if (fromAvailable > 0 || fromReserved > 0) {
+      await tx.partyBalance.update({
+        where: { partyId: deposit.partyId },
+        data: {
+          ...(fromAvailable > 0 ? { available: { decrement: decimalAmount(fromAvailable) } } : {}),
+          ...(fromReserved > 0 ? { reserved: { decrement: decimalAmount(fromReserved) } } : {}),
+        },
+      });
     }
 
     await tx.balanceLedgerEntry.create({

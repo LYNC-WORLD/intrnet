@@ -15,6 +15,7 @@ import {
   releaseReservedBalance,
   reserveBalance,
   creditSettlementReceiver,
+  resolveSettlementBookkeepingCid,
 } from "./balanceService";
 import { getTokenHoldingsTotal } from "../settlementToken/holdingsService";
 import { executeTokenTransfer } from "../settlementToken/transferService";
@@ -154,9 +155,16 @@ export async function executeSettlement(contractId: string) {
   let activeContractId = executedInstruction?.contractId ?? contractId;
 
   try {
-    await reconcileStaleDepositsForParty(instruction.payer);
-
     if (!transferRecorded) {
+      try {
+        await reconcileStaleDepositsForParty(instruction.payer);
+      } catch (err) {
+        console.warn(
+          `Deposit reconcile skipped during settlement execute for ${instruction.payer}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+
       await reserveBalance({
         partyId: instruction.payer,
         amount: instruction.amount,
@@ -325,24 +333,68 @@ export async function confirmSettlement(
   partyId: string,
   createdBy?: string,
 ) {
-  const instruction = await getInstruction(contractId);
+  let instruction = await getInstruction(contractId);
+  let activeContractId = contractId;
+
+  if (!instruction) {
+    const archived = await getArchivedInstruction(contractId);
+    if (archived) {
+      const executed = await findExecutedSettlementInstruction({
+        cycleId: archived.cycleId,
+        payer: archived.payer,
+        receiver: archived.receiver,
+        paymentReference: archived.paymentReference,
+      });
+      if (executed) {
+        instruction = executed;
+        activeContractId = executed.contractId;
+      }
+    }
+  }
+
   if (!instruction) return { error: "Settlement instruction not found", status: 404 as const };
   if (instruction.receiver !== partyId) {
     return { error: "Only receiver can confirm this settlement", status: 403 as const };
   }
+
   if (instruction.status !== "EXECUTED") {
-    return { error: "Only EXECUTED settlement instructions can be confirmed", status: 400 as const };
+    const executed = await findExecutedSettlementInstruction({
+      cycleId: instruction.cycleId,
+      payer: instruction.payer,
+      receiver: instruction.receiver,
+      paymentReference: instruction.paymentReference,
+    });
+    if (!executed) {
+      return { error: "Only EXECUTED settlement instructions can be confirmed", status: 400 as const };
+    }
+    instruction = executed;
+    activeContractId = executed.contractId;
   }
+
+  const paymentReference =
+    instruction.paymentReference ??
+    (await getSettlementTransferReference(contractId)) ??
+    (await getSettlementTransferReference(activeContractId));
+
+  const bookkeepingCid = await resolveSettlementBookkeepingCid(
+    contractId,
+    paymentReference,
+  );
 
   const custodyParty = await getOperatorPartyId();
   const client = partyClient(token, partyId);
   let transferAccepted: AcceptedIncomingTransfer | null = null;
 
   try {
-    if (!(await hasLedgerEntry(contractId, "CREDIT"))) {
+    if (!(await hasLedgerEntry(bookkeepingCid, "CREDIT"))) {
+      const hasPayout = await hasLedgerEntry(bookkeepingCid, "PAYOUT");
+      const hasDebit = await hasLedgerEntry(bookkeepingCid, "DEBIT");
       const pending = await listPendingIncomingTransfers(partyId, client);
       const match = findSettlementPendingTransfer(pending, {
-        instructionCid: contractId,
+        instructionCid: bookkeepingCid,
+        alternateInstructionCids: [contractId, activeContractId].filter(
+          (cid) => cid !== bookkeepingCid,
+        ),
         senderPartyId: custodyParty,
         amount: instruction.amount,
       });
@@ -351,14 +403,20 @@ export async function confirmSettlement(
         try {
           transferAccepted = await acceptIncomingTransfer(match, client);
         } catch (acceptErr) {
-          if (!(await hasLedgerEntry(contractId, "PAYOUT"))) {
+          if (!hasPayout && !hasDebit) {
             throw acceptErr;
           }
         }
-      } else if (!(await hasLedgerEntry(contractId, "PAYOUT"))) {
+      } else if (!hasPayout && !hasDebit) {
         return {
           error:
             `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
+          status: 409 as const,
+        };
+      } else if (!hasDebit) {
+        return {
+          error:
+            "Settlement transfer was sent but operator execute did not finalize balances. Ask the operator to retry execute before confirming.",
           status: 409 as const,
         };
       }
@@ -366,21 +424,27 @@ export async function confirmSettlement(
       await creditSettlementReceiver({
         receiverPartyId: partyId,
         amount: instruction.amount,
-        instructionCid: contractId,
+        instructionCid: bookkeepingCid,
         createdBy,
       });
     }
 
     const result = await client.exercise({
       templateId: T.SettlementInstruction,
-      contractId,
+      contractId: activeContractId,
       choice: "ConfirmReceipt",
       argument: {},
     });
 
-    await auditLedgerExercise(T.SettlementInstruction, "ConfirmReceipt", contractId, result.events, {
-      actorPartyId: partyId,
-    });
+    await auditLedgerExercise(
+      T.SettlementInstruction,
+      "ConfirmReceipt",
+      activeContractId,
+      result.events,
+      {
+        actorPartyId: partyId,
+      },
+    );
 
     const newContractId = extractRecreatedContractId(
       result.exerciseResult,
