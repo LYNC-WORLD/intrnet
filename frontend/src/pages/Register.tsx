@@ -72,7 +72,7 @@ export default function Register() {
       <div className="hidden lg:flex flex-1 flex-col p-12 relative z-10">
         <div className="flex items-center gap-2.5">
           <CantonMark size={26} />
-          <span className="text-xl font-semibold text-bone-100 font-display tracking-tight">NetClear</span>
+          <span className="text-xl font-semibold text-bone-100 font-display tracking-tight">Intrnet</span>
         </div>
         <div className="flex-1 flex flex-col justify-center max-w-md">
           <p className="text-xs font-medium text-lime-400 uppercase tracking-[0.2em] mb-4">Built on Canton</p>
@@ -109,7 +109,7 @@ export default function Register() {
         <div className="w-full max-w-sm">
           <div className="lg:hidden flex items-center gap-2.5 justify-center mb-8">
             <CantonMark size={24} />
-            <span className="text-xl font-semibold text-bone-100 font-display">NetClear</span>
+            <span className="text-xl font-semibold text-bone-100 font-display">Intrnet</span>
           </div>
 
           <h2 className="text-xl font-semibold text-bone-100 font-display mb-1">Create company account</h2>

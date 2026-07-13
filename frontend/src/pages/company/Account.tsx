@@ -1,10 +1,11 @@
 import {
   useMe,
-  useSettlementAccounts,
   useSettlementInstructions,
   useFxRates,
+  useSettlementBalance,
 } from "../../hooks/queries";
-import { CashAccount, SettlementInstruction, FxRate } from "../../types";
+import { Copy } from "lucide-react";
+import { SettlementInstruction, FxRate } from "../../types";
 import {
   Card,
   CardHeader,
@@ -17,31 +18,25 @@ import {
   EmptyState,
 } from "../../components/ui";
 import { fmt } from "../../utils";
+import toast from "react-hot-toast";
 
 export default function Account() {
   const { data: profile, isLoading: loadingMe } = useMe();
-  const { data: accountsData, isLoading: loadingAccounts } =
-    useSettlementAccounts();
+  const { data: account, isLoading: loadingBalance } = useSettlementBalance();
+
   const { data: historyData, isLoading: loadingHistory } =
     useSettlementInstructions({ status: "CONFIRMED" });
   const { data: ratesData, isLoading: loadingRates } = useFxRates();
-
-  const accounts: CashAccount[] = accountsData ?? [];
-  const account =
-    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
 
   const history: SettlementInstruction[] =
     historyData?.instructions ?? historyData ?? [];
   const rates: FxRate[] = ratesData ?? [];
 
-  const loading =
-    loadingMe || loadingAccounts || loadingHistory || loadingRates;
+  const loading = loadingMe || loadingBalance || loadingHistory || loadingRates;
 
   if (loading) return <PageLoader />;
 
   const txRows = history.map((h) => {
-    // isCredit means money came TO us — compare against our own partyId,
-    // since the API doesn't return receiverName/payerName fields.
     const isCredit = h.receiver === profile?.partyId;
     return { ...h, isCredit };
   });
@@ -61,7 +56,7 @@ export default function Account() {
               label="Canton party ID"
               value={profile?.partyId ?? "—"}
               mono
-              copyable
+              copyable={true}
             />
             <Row
               label="Agreement ID"
@@ -77,7 +72,7 @@ export default function Account() {
           </CardHeader>
           <CardBody>
             <p className="text-3xl font-bold text-bone-100">
-              {account ? fmt.currency(account.balance, account.currency) : "—"}
+              {account ? fmt.currency(account.total, account.currency) : "—"}
             </p>
             <p className="text-xs text-bone-700 mt-1">
               On-ledger settlement account
@@ -201,22 +196,30 @@ function Row({
   mono?: boolean;
   copyable?: boolean;
 }) {
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    toast.success("Copied to clipboard");
+  };
+
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-bone-500">{label}</span>
-      <span
-        className={`text-sm text-bone-100 ${mono ? "font-mono" : "font-medium"} truncate max-w-[180px]`}
-      >
-        {value}
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-bone-500 shrink-0">{label}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span
+          className={`text-sm text-bone-100 ${mono ? "font-mono" : "font-medium"} truncate max-w-[140px]`}
+        >
+          {value}
+        </span>
         {copyable && value !== "—" && (
           <button
-            onClick={() => navigator.clipboard.writeText(value)}
-            className="ml-2 text-bone-700 hover:text-lime-400"
+            onClick={handleCopy}
+            className="shrink-0 text-bone-700 hover:text-lime-400 transition-colors"
+            title="Copy to clipboard"
           >
-            ⧉
+            <Copy size={13} />
           </button>
         )}
-      </span>
+      </div>
     </div>
   );
 }

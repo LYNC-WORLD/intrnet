@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
+import { Check } from "lucide-react";
 import {
   useParticipants,
   useFxRates,
   useAgreement,
   useCreateObligation,
+  useSettlementBalance,
 } from "../../hooks/queries";
 import { Participant } from "../../types";
 import {
@@ -16,6 +18,7 @@ import {
   Textarea,
   Button,
   PageLoader,
+  Alert,
 } from "../../components/ui";
 import { fmt, convertToUSD } from "../../utils";
 import { useAuth } from "@/context/AuthContext";
@@ -31,6 +34,7 @@ export default function CreateObligation() {
   const { data: agreementData, isLoading: loadingAgreement } = useAgreement(
     user?.agreementId ?? undefined,
   );
+  const { data: balance, isLoading: loadingBalance } = useSettlementBalance();
   const createMutation = useCreateObligation();
 
   const [success, setSuccess] = useState<string | null>(null);
@@ -53,12 +57,16 @@ export default function CreateObligation() {
       ? convertToUSD(Number(form.amount), form.currency, rates)
       : null;
 
+  const exceedsBalance =
+    balance != null && estimatedUsd != null && estimatedUsd > balance.total;
+
   const valid =
     form.receiver &&
     form.amount &&
     Number(form.amount) > 0 &&
     form.invoiceRef &&
-    form.description;
+    form.description &&
+    !exceedsBalance;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,13 +93,14 @@ export default function CreateObligation() {
     );
   };
 
-  const loading = loadingParticipants || loadingRates || loadingAgreement;
+  const loading =
+    loadingParticipants || loadingRates || loadingAgreement || loadingBalance;
   if (loading) return <PageLoader />;
 
   if (success) {
     return (
       <div className="max-w-lg mx-auto text-center py-16">
-        <div className="text-5xl mb-4">✅</div>
+        <Check className="h-[40px] w-[40px] mb-4 mx-auto" />
         <h2 className="text-xl font-semibold text-bone-100 mb-2">
           Obligation created
         </h2>
@@ -147,6 +156,7 @@ export default function CreateObligation() {
                   setForm((f) => ({ ...f, amount: e.target.value }))
                 }
                 required
+                error={exceedsBalance ? "Exceeds available balance" : undefined}
               />
               <Select
                 label="Currency"
@@ -185,8 +195,23 @@ export default function CreateObligation() {
               </p>
               <p className="text-xs text-bone-700 mt-1">
                 Display only · based on latest FX rate
+                {balance && (
+                  <>
+                    {" "}
+                    · Available balance:{" "}
+                    {fmt.currency(balance.total, balance.currency)}
+                  </>
+                )}
               </p>
             </div>
+
+            {exceedsBalance && (
+              <Alert type="error">
+                <strong>Insufficient balance.</strong> This obligation exceeds
+                your available balance of{" "}
+                {fmt.currency(balance!.total, balance!.currency)}.
+              </Alert>
+            )}
 
             <Button
               type="submit"

@@ -75,7 +75,7 @@ export default function Shell({ children }: { children: ReactNode }) {
         <div className="h-16 flex items-center gap-2.5 px-6 border-b border-ink-500">
           <CantonMark size={22} />
           <span className="text-lg font-semibold text-bone-100 font-display tracking-tight">
-            NetClear
+            Intrnet
           </span>
         </div>
 
