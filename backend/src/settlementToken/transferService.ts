@@ -23,6 +23,7 @@ const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
 const REQUESTED_AT_SKEW_MS = 1000;
 const LOG_PREFIX = "[SettlementTransfer]";
 const MAX_FACTORY_ATTEMPTS_PER_CANDIDATE = 3;
+const INACTIVE_CONTRACT_ERROR_PATTERN = /LOCAL_VERDICT_INACTIVE_CONTRACTS|inactive contracts/i;
 
 function transferDebugEnabled(): boolean {
   const flag = process.env.SETTLEMENT_TRANSFER_DEBUG?.trim().toLowerCase();
@@ -303,6 +304,12 @@ export async function executeTokenTransfer(params: {
   });
 
   let lastRetryableError: unknown;
+  const candidateFailures: Array<{
+    attemptIndex: number;
+    factoryAttemptIndex: number;
+    inputHoldingCids: string[];
+    error: string;
+  }> = [];
 
   for (let attemptIndex = 0; attemptIndex < attemptCandidates.length; attemptIndex++) {
     const candidate = attemptCandidates[attemptIndex]!;
@@ -332,6 +339,12 @@ export async function executeTokenTransfer(params: {
         const formatted = formatTransferError(err);
         if (!isRetryableTransferError(formatted)) throw formatted;
         lastRetryableError = formatted;
+        candidateFailures.push({
+          attemptIndex,
+          factoryAttemptIndex,
+          inputHoldingCids: candidate.inputHoldingCids,
+          error: formatted.message,
+        });
         const hasMoreFactoryAttempts =
           factoryAttemptIndex + 1 < MAX_FACTORY_ATTEMPTS_PER_CANDIDATE;
         if (hasMoreFactoryAttempts) {
@@ -356,6 +369,14 @@ export async function executeTokenTransfer(params: {
   const attempted = attemptCandidates
     .map((candidate) => candidate.inputHoldingCids.join(","))
     .join("; ");
+  const inactiveContextFailure = candidateFailures.find((failure) =>
+    INACTIVE_CONTRACT_ERROR_PATTERN.test(failure.error),
+  );
+  if (inactiveContextFailure) {
+    throw new Error(
+      `Transfer-factory returned stale disclosed contracts that are inactive on ledger (candidate #${inactiveContextFailure.attemptIndex}, factory attempt #${inactiveContextFailure.factoryAttemptIndex}, holdings=${inactiveContextFailure.inputHoldingCids.join(",")}). Original error: ${inactiveContextFailure.error}. Attempted holding candidates: ${attempted}`,
+    );
+  }
   const message =
     lastRetryableError instanceof Error
       ? lastRetryableError.message

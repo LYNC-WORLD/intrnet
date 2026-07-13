@@ -15,16 +15,7 @@ const CURRENCIES = (process.env.SUPPORTED_CURRENCIES ?? "EUR,GBP,JPY,CHF,AUD")
   .map((c) => c.trim())
   .filter(Boolean);
 
-const SETTLEMENT_CURRENCY = process.env.SETTLEMENT_CURRENCY ?? "USD";
-
-function resolveFxApiBaseCurrency(): string {
-  const configured = process.env.FX_API_BASE_CURRENCY?.trim();
-  if (configured) return configured;
-  if (SETTLEMENT_CURRENCY === "tUSD") return "USD";
-  return SETTLEMENT_CURRENCY;
-}
-
-const FX_API_BASE = resolveFxApiBaseCurrency();
+const FX_API_BASE = FX_ORACLE_TARGET_CURRENCY;
 
 type FxApiResponse = {
   result?: string;

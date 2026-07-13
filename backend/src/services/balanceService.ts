@@ -495,7 +495,7 @@ export async function finalizeSettlementBalances(params: {
           referenceId: params.instructionCid,
           instructionCid: params.instructionCid,
           createdBy: params.createdBy,
-          note: "Real tUSD transferred from custody to receiver wallet",
+          note: `Real ${currency} transferred from custody to receiver wallet`,
         },
       });
     }
@@ -559,7 +559,7 @@ export async function creditSettlementReceiver(params: {
           referenceId: params.instructionCid,
           instructionCid: params.instructionCid,
           createdBy: params.createdBy,
-          note: "Receiver accepted on-chain tUSD and confirmed settlement",
+          note: `Receiver accepted on-chain ${currency} and confirmed settlement`,
         },
       });
 

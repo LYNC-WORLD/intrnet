@@ -1,11 +1,11 @@
 import { Request, Response } from "express";
 import * as agreementsService from "../services/agreementsService";
-import { getSettlementCurrency } from "../config/settlementToken";
+import { FX_ORACLE_TARGET_CURRENCY } from "../utils/fxCurrency";
 import { asyncHandler } from "../utils/asyncHandler";
 import { isServiceError, sendServiceError } from "../utils/http";
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const { agreementId, settlementCurrency = getSettlementCurrency(), agreementDate } = req.body as {
+  const { agreementId, settlementCurrency = FX_ORACLE_TARGET_CURRENCY, agreementDate } = req.body as {
     agreementId?: string;
     settlementCurrency?: string;
     agreementDate?: string;

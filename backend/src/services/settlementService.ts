@@ -318,7 +318,7 @@ export async function confirmSettlement(
       } else if (!(await hasLedgerEntry(contractId, "PAYOUT"))) {
         return {
           error:
-            "No pending tUSD transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.",
+            `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
           status: 409 as const,
         };
       }

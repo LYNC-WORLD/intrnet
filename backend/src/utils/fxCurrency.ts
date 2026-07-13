@@ -1,13 +1,54 @@
 export const FX_ORACLE_TARGET_CURRENCY = "USD";
 
+export function getSettlementInstrumentId(): string {
+  return (
+    process.env.SETTLEMENT_INSTRUMENT_ID?.trim() ||
+    process.env.SETTLEMENT_CURRENCY?.trim() ||
+    "tUSD"
+  );
+}
+
+export function getSettlementUsdEquivalentCurrencies(): Set<string> {
+  const equivalents = new Set<string>([FX_ORACLE_TARGET_CURRENCY]);
+  const instrument = getSettlementInstrumentId();
+  if (instrument) equivalents.add(instrument);
+
+  const configured = process.env.SETTLEMENT_USD_EQUIVALENTS?.split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  for (const currency of configured ?? []) {
+    equivalents.add(currency);
+  }
+
+  equivalents.add("tUSD");
+
+  return equivalents;
+}
+
+export function currenciesAreSettlementEquivalent(left: string, right: string): boolean {
+  if (left === right) return true;
+  const family = getSettlementUsdEquivalentCurrencies();
+  return family.has(left) && family.has(right);
+}
+
 export function normalizeFxToCurrencyForApi(toCurrency: string): string {
-  if (toCurrency === "tUSD") return FX_ORACLE_TARGET_CURRENCY;
+  if (
+    toCurrency !== FX_ORACLE_TARGET_CURRENCY &&
+    getSettlementUsdEquivalentCurrencies().has(toCurrency)
+  ) {
+    return FX_ORACLE_TARGET_CURRENCY;
+  }
   return toCurrency;
 }
 
 export function normalizeFxToCurrencyForLedger(toCurrency: string): string {
   const trimmed = toCurrency.trim();
-  if (trimmed === "tUSD" || trimmed === "USD") return FX_ORACLE_TARGET_CURRENCY;
+  if (
+    trimmed === FX_ORACLE_TARGET_CURRENCY ||
+    getSettlementUsdEquivalentCurrencies().has(trimmed)
+  ) {
+    return FX_ORACLE_TARGET_CURRENCY;
+  }
   return trimmed;
 }
 
@@ -15,10 +56,7 @@ export function oracleToCurrencyMatchesSettlement(
   oracleToCurrency: string,
   settlementCurrency: string,
 ): boolean {
-  if (oracleToCurrency === settlementCurrency) return true;
-  if (settlementCurrency === "tUSD" && oracleToCurrency === FX_ORACLE_TARGET_CURRENCY) return true;
-  if (settlementCurrency === FX_ORACLE_TARGET_CURRENCY && oracleToCurrency === "tUSD") return true;
-  return false;
+  return currenciesAreSettlementEquivalent(oracleToCurrency, settlementCurrency);
 }
 
 export function isContractUpgradeError(err: unknown): boolean {
@@ -42,7 +80,10 @@ export function dedupeFxRatesByFromCurrency<T extends FxRateLike>(rates: T[]): T
       byFrom.set(rate.fromCurrency, rate);
       continue;
     }
-    if (existing.toCurrency === "tUSD" && rate.toCurrency === FX_ORACLE_TARGET_CURRENCY) {
+    if (
+      existing.toCurrency !== FX_ORACLE_TARGET_CURRENCY &&
+      rate.toCurrency === FX_ORACLE_TARGET_CURRENCY
+    ) {
       byFrom.set(rate.fromCurrency, rate);
     }
   }
@@ -54,4 +95,12 @@ export function mapFxRatesForApi<T extends FxRateLike>(rates: T[]): T[] {
     ...rate,
     toCurrency: normalizeFxToCurrencyForApi(rate.toCurrency),
   }));
+}
+
+export function listFxOracleToCurrencyQueryValues(toCurrency: string): string[] {
+  const normalized = normalizeFxToCurrencyForLedger(toCurrency);
+  if (normalized !== FX_ORACLE_TARGET_CURRENCY) {
+    return [normalized];
+  }
+  return [...getSettlementUsdEquivalentCurrencies()];
 }

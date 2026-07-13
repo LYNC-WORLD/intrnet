@@ -1,4 +1,5 @@
 import { getOperatorPartyId } from "../ledger/operatorParty";
+import { currenciesAreSettlementEquivalent } from "../utils/fxCurrency";
 
 export interface TokenConfig {
   network: string;
@@ -42,9 +43,7 @@ export function getSettlementCurrency(): string {
 }
 
 export function currenciesMatchForSettlement(left: string, right: string): boolean {
-  if (left === right) return true;
-  const usdFamily = new Set(["USD", "tUSD"]);
-  return usdFamily.has(left) && usdFamily.has(right);
+  return currenciesAreSettlementEquivalent(left, right);
 }
 
 export function getRegistryBaseUrl(): string {
