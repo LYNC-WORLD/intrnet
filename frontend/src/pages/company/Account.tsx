@@ -4,6 +4,7 @@ import {
   useFxRates,
   useSettlementBalance,
 } from "../../hooks/queries";
+import { Copy } from "lucide-react";
 import { SettlementInstruction, FxRate } from "../../types";
 import {
   Card,
@@ -17,6 +18,7 @@ import {
   EmptyState,
 } from "../../components/ui";
 import { fmt } from "../../utils";
+import toast from "react-hot-toast";
 
 export default function Account() {
   const { data: profile, isLoading: loadingMe } = useMe();
@@ -54,7 +56,7 @@ export default function Account() {
               label="Canton party ID"
               value={profile?.partyId ?? "—"}
               mono
-              copyable
+              copyable={true}
             />
             <Row
               label="Agreement ID"
@@ -194,22 +196,30 @@ function Row({
   mono?: boolean;
   copyable?: boolean;
 }) {
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    toast.success("Copied to clipboard");
+  };
+
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-bone-500">{label}</span>
-      <span
-        className={`text-sm text-bone-100 ${mono ? "font-mono" : "font-medium"} truncate max-w-[180px]`}
-      >
-        {value}
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-bone-500 shrink-0">{label}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span
+          className={`text-sm text-bone-100 ${mono ? "font-mono" : "font-medium"} truncate max-w-[140px]`}
+        >
+          {value}
+        </span>
         {copyable && value !== "—" && (
           <button
-            onClick={() => navigator.clipboard.writeText(value)}
-            className="ml-2 text-bone-700 hover:text-lime-400"
+            onClick={handleCopy}
+            className="shrink-0 text-bone-700 hover:text-lime-400 transition-colors"
+            title="Copy to clipboard"
           >
-            ⧉
+            <Copy size={13} />
           </button>
         )}
-      </span>
+      </div>
     </div>
   );
 }

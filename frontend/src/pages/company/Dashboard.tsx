@@ -45,14 +45,14 @@ export default function Dashboard() {
   const pending: Obligation[] = pendingData?.obligations ?? pendingData ?? [];
   const acceptedCount: number = acceptedData?.total ?? 0;
 
-  const allPositions: NetPosition[] =
-    positionsData?.positions ?? positionsData ?? [];
-  const position = allPositions.length
-    ? allPositions.sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      )[0]
-    : null;
+  const allPositions: NetPosition[] = Array.isArray(positionsData)
+    ? positionsData
+    : (positionsData?.positions ?? []);
+  const totalNetPosition = allPositions.reduce(
+    (sum, p) => sum + p.netAmountSettlement,
+    0,
+  );
+  const hasPositions = allPositions.length > 0;
 
   const cycles: NettingCycle[] = Array.isArray(cyclesData) ? cyclesData : [];
   const openCycle = cycles.find((c) => c?.status === "OPEN") ?? null;
@@ -85,7 +85,8 @@ export default function Dashboard() {
           Dashboard
           {isRefetching && (
             <span className="text-xs text-bone-700 font-normal flex items-center gap-1">
-              <RefreshCw size={11} className="animate-spin" /> Updating
+              <RefreshCw size={11} className="animate-spin" />{" "}
+              <span className="hidden sm:block"> Updating</span>
             </span>
           )}
         </h1>
@@ -118,17 +119,17 @@ export default function Dashboard() {
         />
         <KpiCard
           label="Net Position"
-          value={position ? fmt.currency(position.netAmountSettlement) : "—"}
+          value={hasPositions ? fmt.currency(totalNetPosition) : "—"}
           sub={
-            position
-              ? position.netAmountSettlement >= 0
+            hasPositions
+              ? totalNetPosition >= 0
                 ? "You receive"
                 : "You owe"
               : "No position yet"
           }
           color={
-            position
-              ? position.netAmountSettlement >= 0
+            hasPositions
+              ? totalNetPosition >= 0
                 ? "text-emerald-400"
                 : "text-red-400"
               : undefined
