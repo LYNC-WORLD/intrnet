@@ -386,7 +386,7 @@ export async function reserveBalance(params: {
         entryType: "RESERVE",
         amount: decimalAmount(params.amount),
         currency,
-        referenceType: "SETTLEMENT_EXECUTE",
+        referenceType: "SETTLEMENT_RESERVE",
         referenceId: params.instructionCid,
         instructionCid: params.instructionCid,
         createdBy: params.createdBy,
@@ -414,7 +414,12 @@ export async function finalizeSettlementBalances(params: {
     const existingDebit = await tx.balanceLedgerEntry.findUnique({
       where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "DEBIT" } },
     });
-    if (existingDebit) {
+    const existingPayout = creditReceiver
+      ? null
+      : await tx.balanceLedgerEntry.findUnique({
+          where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "PAYOUT" } },
+        });
+    if (existingDebit && (!creditReceiver ? existingPayout : true)) {
       const payerBalance = await tx.partyBalance.findUnique({ where: { partyId: params.payerPartyId } });
       if (!payerBalance) throw new Error("Payer balance not found");
       let receiverView: PartyBalanceView | null = null;
@@ -432,59 +437,72 @@ export async function finalizeSettlementBalances(params: {
       throw new Error("Payer balance not found");
     }
 
-    const payerReserved = toNumber(payerBalance.reserved);
-    if (payerReserved < params.amount) {
-      throw new Error("Insufficient reserved balance for payer");
-    }
+    let updatedPayer = payerBalance;
+    if (!existingDebit) {
+      const payerReserved = toNumber(payerBalance.reserved);
+      if (payerReserved < params.amount) {
+        throw new Error("Insufficient reserved balance for payer");
+      }
 
-    const updatedPayer = await tx.partyBalance.update({
-      where: { partyId: params.payerPartyId },
-      data: {
-        reserved: { decrement: decimalAmount(params.amount) },
-      },
-    });
-
-    await tx.balanceLedgerEntry.create({
-      data: {
-        partyId: params.payerPartyId,
-        entryType: "DEBIT",
-        amount: decimalAmount(params.amount),
-        currency,
-        referenceType: "SETTLEMENT_EXECUTE",
-        referenceId: params.instructionCid,
-        instructionCid: params.instructionCid,
-        createdBy: params.createdBy,
-      },
-    });
-
-    let receiverView: PartyBalanceView | null = null;
-    if (creditReceiver) {
-      const updatedReceiver = await tx.partyBalance.upsert({
-        where: { partyId: params.receiverPartyId },
-        update: { available: { increment: decimalAmount(params.amount) } },
-        create: {
-          partyId: params.receiverPartyId,
-          available: decimalAmount(params.amount),
-          reserved: decimalAmount(0),
-          currency,
+      updatedPayer = await tx.partyBalance.update({
+        where: { partyId: params.payerPartyId },
+        data: {
+          reserved: { decrement: decimalAmount(params.amount) },
         },
       });
 
       await tx.balanceLedgerEntry.create({
         data: {
-          partyId: params.receiverPartyId,
-          entryType: "CREDIT",
+          partyId: params.payerPartyId,
+          entryType: "DEBIT",
           amount: decimalAmount(params.amount),
           currency,
-          referenceType: "SETTLEMENT_RECEIVE",
+          referenceType: "SETTLEMENT_DEBIT",
           referenceId: params.instructionCid,
           instructionCid: params.instructionCid,
           createdBy: params.createdBy,
         },
       });
+    }
 
-      receiverView = toBalanceView(updatedReceiver);
-    } else {
+    let receiverView: PartyBalanceView | null = null;
+    if (creditReceiver) {
+      const existingCredit = await tx.balanceLedgerEntry.findUnique({
+        where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "CREDIT" } },
+      });
+      if (!existingCredit) {
+        const updatedReceiver = await tx.partyBalance.upsert({
+          where: { partyId: params.receiverPartyId },
+          update: { available: { increment: decimalAmount(params.amount) } },
+          create: {
+            partyId: params.receiverPartyId,
+            available: decimalAmount(params.amount),
+            reserved: decimalAmount(0),
+            currency,
+          },
+        });
+
+        await tx.balanceLedgerEntry.create({
+          data: {
+            partyId: params.receiverPartyId,
+            entryType: "CREDIT",
+            amount: decimalAmount(params.amount),
+            currency,
+            referenceType: "SETTLEMENT_RECEIVE",
+            referenceId: params.instructionCid,
+            instructionCid: params.instructionCid,
+            createdBy: params.createdBy,
+          },
+        });
+
+        receiverView = toBalanceView(updatedReceiver);
+      } else {
+        const receiverBalance = await tx.partyBalance.findUnique({
+          where: { partyId: params.receiverPartyId },
+        });
+        receiverView = receiverBalance ? toBalanceView(receiverBalance) : null;
+      }
+    } else if (!existingPayout) {
       await tx.balanceLedgerEntry.create({
         data: {
           partyId: params.receiverPartyId,

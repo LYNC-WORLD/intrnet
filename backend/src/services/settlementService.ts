@@ -28,6 +28,8 @@ import {
 } from "../settlementToken/transferInstructionService";
 import { SETTLEMENT_INSTRUCTION_META_KEY } from "../settlementToken/metadata";
 import {
+  findExecutedSettlementInstruction,
+  getArchivedInstruction,
   getInstruction,
   listCycleIdsByAgreement,
   listSettlementInstructions as pqsListInstructions,
@@ -102,10 +104,18 @@ export async function listSettlementBalances(role: string, partyId: string) {
 }
 
 export async function executeSettlement(contractId: string) {
-  const instruction = await getInstruction(contractId);
-  if (!instruction) return { error: "Settlement instruction not found", status: 404 as const };
-  if (instruction.status !== "PENDING") {
-    return { error: "Only PENDING settlement instructions can be executed", status: 400 as const };
+  const transferRecorded = await hasLedgerEntry(contractId, "TRANSFER");
+  const alreadyFinalized = await hasLedgerEntry(contractId, "DEBIT");
+
+  if (alreadyFinalized) {
+    return { error: "Settlement balances already finalized for this instruction", status: 409 as const };
+  }
+
+  let instruction =
+    (await getInstruction(contractId)) ??
+    (transferRecorded ? await getArchivedInstruction(contractId) : null);
+  if (!instruction) {
+    return { error: "Settlement instruction not found", status: 404 as const };
   }
 
   const settlementCurrency = getSettlementCurrency();
@@ -116,59 +126,94 @@ export async function executeSettlement(contractId: string) {
     };
   }
 
-  if (await hasLedgerEntry(contractId, "DEBIT")) {
-    return { error: "Settlement balances already finalized for this instruction", status: 409 as const };
+  let paymentReference =
+    (await getSettlementTransferReference(contractId)) ?? instruction.paymentReference;
+
+  const executedInstruction =
+  instruction.status === "EXECUTED"
+    ? instruction
+    : await findExecutedSettlementInstruction({
+        cycleId: instruction.cycleId,
+        payer: instruction.payer,
+        receiver: instruction.receiver,
+        paymentReference,
+      });
+
+  const resumeAfterTransfer = transferRecorded || executedInstruction !== null;
+  const attestedOnLedger = executedInstruction !== null;
+
+  if (!resumeAfterTransfer && instruction.status !== "PENDING") {
+    return { error: "Only PENDING settlement instructions can be executed", status: 400 as const };
   }
 
-  let phase: ExecutePhase = "none";
-  let paymentReference: string | null = null;
+  let phase: ExecutePhase = transferRecorded ? "transferred" : "none";
+  let attestResult: {
+    exerciseResult: unknown;
+    events: Array<Record<string, unknown>>;
+  } | null = null;
+  let activeContractId = executedInstruction?.contractId ?? contractId;
 
   try {
     await reconcileStaleDepositsForParty(instruction.payer);
 
-    await reserveBalance({
-      partyId: instruction.payer,
-      amount: instruction.amount,
-      instructionCid: contractId,
-    });
-    phase = "reserved";
-
-    paymentReference =
-      (await getSettlementTransferReference(contractId)) ??
-      instruction.paymentReference;
-
-    if (!paymentReference) {
-      const holdingContractIds = await listActiveDepositHoldingIdsForParty(instruction.payer);
-      const transfer = await executeTokenTransfer({
-        receiverPartyId: instruction.receiver,
+    if (!transferRecorded) {
+      await reserveBalance({
+        partyId: instruction.payer,
         amount: instruction.amount,
-        holdingContractIds,
-        meta: {
-          [SETTLEMENT_INSTRUCTION_META_KEY]: contractId,
+        instructionCid: contractId,
+      });
+      phase = "reserved";
+
+      if (!paymentReference) {
+        const holdingContractIds = await listActiveDepositHoldingIdsForParty(instruction.payer);
+        const transfer = await executeTokenTransfer({
+          receiverPartyId: instruction.receiver,
+          amount: instruction.amount,
+          holdingContractIds,
+          meta: {
+            [SETTLEMENT_INSTRUCTION_META_KEY]: contractId,
+          },
+        });
+        paymentReference = transfer.paymentReference;
+        await recordSettlementTransfer({
+          payerPartyId: instruction.payer,
+          instructionCid: contractId,
+          paymentReference,
+          amount: instruction.amount,
+        });
+      }
+      phase = "transferred";
+    }
+
+    if (!attestedOnLedger) {
+      if (!paymentReference) {
+        throw new Error("Payment reference is required to attest settlement");
+      }
+      const client = await operatorClient();
+      const result = await client.exercise({
+        templateId: T.SettlementInstruction,
+        contractId,
+        choice: "AttestPayment",
+        argument: {
+          paymentUpdateId: paymentReference,
         },
       });
-      paymentReference = transfer.paymentReference;
-      await recordSettlementTransfer({
-        payerPartyId: instruction.payer,
-        instructionCid: contractId,
-        paymentReference,
-        amount: instruction.amount,
-      });
+      phase = "attested";
+      attestResult = result;
+
+      await auditLedgerExercise(T.SettlementInstruction, "AttestPayment", contractId, result.events);
+
+      const newContractId = extractRecreatedContractId(
+        result.exerciseResult,
+        result.events as Array<{ created?: { contractId: string; templateId: string } }>,
+        T.SettlementInstruction,
+      );
+      if (newContractId) {
+        activeContractId = newContractId;
+      }
+    } else {
+      phase = "attested";
     }
-    phase = "transferred";
-
-    const client = await operatorClient();
-    const result = await client.exercise({
-      templateId: T.SettlementInstruction,
-      contractId,
-      choice: "AttestPayment",
-      argument: {
-        paymentUpdateId: paymentReference,
-      },
-    });
-    phase = "attested";
-
-    await auditLedgerExercise(T.SettlementInstruction, "AttestPayment", contractId, result.events);
 
     await finalizeSettlementBalances({
       payerPartyId: instruction.payer,
@@ -179,18 +224,13 @@ export async function executeSettlement(contractId: string) {
     });
     phase = "finalized";
 
-    const newContractId = extractRecreatedContractId(
-      result.exerciseResult,
-      result.events as Array<{ created?: { contractId: string; templateId: string } }>,
-      T.SettlementInstruction,
-    );
-
     return {
       data: {
-        newContractId,
+        newContractId: activeContractId,
         paymentReference,
-        exerciseResult: result.exerciseResult,
-        events: result.events,
+        exerciseResult: attestResult?.exerciseResult ?? null,
+        events: attestResult?.events ?? [],
+        resumed: resumeAfterTransfer,
       },
     };
   } catch (err) {

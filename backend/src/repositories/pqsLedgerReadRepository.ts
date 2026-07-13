@@ -546,6 +546,48 @@ export async function getInstruction(contractId: string): Promise<PqsSettlementI
   return rows.length > 0 ? rowToInstruction(rows[0]) : null;
 }
 
+export async function getArchivedInstruction(contractId: string): Promise<PqsSettlementInstruction | null> {
+  const packageId = pkg();
+  const { rows } = await pqs.query(
+    `SELECT contract_id, payload, created_effective_at FROM archives($1)
+     WHERE package_id = $2 AND contract_id = $3
+     ORDER BY created_effective_at DESC
+     LIMIT 1`,
+    [pqsTemplateRef(T.SettlementInstruction), packageId, contractId],
+  );
+  return rows.length > 0 ? rowToInstruction(rows[0]) : null;
+}
+
+export async function findExecutedSettlementInstruction(params: {
+  cycleId: string;
+  payer: string;
+  receiver: string;
+  paymentReference?: string | null;
+}): Promise<PqsSettlementInstruction | null> {
+  const packageId = pkg();
+  const args: unknown[] = [
+    pqsTemplateRef(T.SettlementInstruction),
+    packageId,
+    params.cycleId,
+    params.payer,
+    params.receiver,
+    "EXECUTED",
+  ];
+  let sql = `SELECT contract_id, payload, created_effective_at FROM active($1)
+     WHERE package_id = $2
+       AND payload->>'cycleId' = $3
+       AND payload->>'payer' = $4
+       AND payload->>'receiver' = $5
+       AND payload->>'status' = $6`;
+  if (params.paymentReference) {
+    sql += ` AND payload->>'paymentReference' = $7`;
+    args.push(params.paymentReference);
+  }
+  sql += ` ORDER BY created_effective_at DESC LIMIT 1`;
+  const { rows } = await pqs.query(sql, args);
+  return rows.length > 0 ? rowToInstruction(rows[0]) : null;
+}
+
 export async function listSettlementInstructions(params: {
   role: string;
   partyId: string;
