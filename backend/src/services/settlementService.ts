@@ -527,15 +527,6 @@ export async function confirmSettlement(
     { payer: instruction.payer, amount: instruction.amount },
   );
 
-  try {
-    await ensureSettlementFinalized(bookkeepingCid, paymentReference);
-  } catch (err) {
-    console.warn(
-      `Pre-confirm finalize skipped for ${bookkeepingCid}:`,
-      err instanceof Error ? err.message : err,
-    );
-  }
-
   const custodyParty = await getOperatorPartyId();
   const client = partyClient(token, partyId);
   let transferAccepted: AcceptedIncomingTransfer | null = null;
@@ -544,6 +535,7 @@ export async function confirmSettlement(
     if (!(await hasLedgerEntry(bookkeepingCid, "CREDIT"))) {
       const hasPayout = await hasLedgerEntry(bookkeepingCid, "PAYOUT");
       const hasDebit = await hasLedgerEntry(bookkeepingCid, "DEBIT");
+      const hasTransfer = await hasLedgerEntry(bookkeepingCid, "TRANSFER");
       const pending = await listPendingIncomingTransfers(partyId, client);
       const match = findSettlementPendingTransfer(pending, {
         instructionCid: bookkeepingCid,
@@ -558,16 +550,29 @@ export async function confirmSettlement(
         try {
           transferAccepted = await acceptIncomingTransfer(match, client);
         } catch (acceptErr) {
-          if (!hasPayout && !hasDebit) {
+          if (!hasPayout && !hasDebit && !hasTransfer) {
             throw acceptErr;
           }
         }
-      } else if (!hasPayout && !hasDebit) {
-        const finalized = await ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
+      }
+
+      if (!hasDebit) {
+        const finalized = await ensureSettlementFinalized(
+          bookkeepingCid,
+          paymentReference,
+          createdBy,
+        );
         if (!finalized) {
+          if (!hasTransfer && !match) {
+            return {
+              error:
+                `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
+              status: 409 as const,
+            };
+          }
           return {
             error:
-              `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
+              "Settlement is EXECUTED on-chain but app balances were not finalized. Ask the operator to run sync or retry execute.",
             status: 409 as const,
           };
         }

@@ -480,9 +480,41 @@ export async function reserveBalance(params: {
       where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "RESERVE" } },
     });
     if (existing) {
+      const debit = await tx.balanceLedgerEntry.findUnique({
+        where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "DEBIT" } },
+      });
+      if (debit) {
+        const balance = await tx.partyBalance.findUnique({ where: { partyId: params.partyId } });
+        if (!balance) throw new Error("Party balance not found");
+        return toBalanceView(balance);
+      }
+
       const balance = await tx.partyBalance.findUnique({ where: { partyId: params.partyId } });
       if (!balance) throw new Error("Party balance not found");
-      return toBalanceView(balance);
+
+      const reserved = toNumber(balance.reserved);
+      const gap = params.amount - reserved;
+      if (gap <= 0.00000001) {
+        return toBalanceView(balance);
+      }
+
+      const updated = await tx.partyBalance.updateMany({
+        where: {
+          partyId: params.partyId,
+          available: { gte: decimalAmount(gap) },
+        },
+        data: {
+          available: { decrement: decimalAmount(gap) },
+          reserved: { increment: decimalAmount(gap) },
+        },
+      });
+      if (updated.count === 0) {
+        throw new Error("Insufficient available balance");
+      }
+
+      const refreshed = await tx.partyBalance.findUnique({ where: { partyId: params.partyId } });
+      if (!refreshed) throw new Error("Party balance not found");
+      return toBalanceView(refreshed);
     }
 
     const updated = await tx.partyBalance.updateMany({
@@ -561,17 +593,37 @@ export async function finalizeSettlementBalances(params: {
 
     let updatedPayer = payerBalance;
     if (!existingDebit) {
-      const payerReserved = toNumber(payerBalance.reserved);
-      if (payerReserved < params.amount) {
-        throw new Error("Insufficient reserved balance for payer");
-      }
-
-      updatedPayer = await tx.partyBalance.update({
-        where: { partyId: params.payerPartyId },
-        data: {
-          reserved: { decrement: decimalAmount(params.amount) },
+      const transferEntry = await tx.balanceLedgerEntry.findUnique({
+        where: {
+          instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "TRANSFER" },
         },
       });
+      const payerReserved = toNumber(payerBalance.reserved);
+      const payerAvailable = toNumber(payerBalance.available);
+
+      if (payerReserved >= params.amount) {
+        updatedPayer = await tx.partyBalance.update({
+          where: { partyId: params.payerPartyId },
+          data: {
+            reserved: { decrement: decimalAmount(params.amount) },
+          },
+        });
+      } else if (transferEntry) {
+        const fromReserved = payerReserved;
+        const fromAvailable = params.amount - fromReserved;
+        if (payerAvailable < fromAvailable) {
+          throw new Error("Insufficient balance to finalize settlement after on-chain transfer");
+        }
+        updatedPayer = await tx.partyBalance.update({
+          where: { partyId: params.payerPartyId },
+          data: {
+            reserved: { decrement: decimalAmount(fromReserved) },
+            available: { decrement: decimalAmount(fromAvailable) },
+          },
+        });
+      } else {
+        throw new Error("Insufficient reserved balance for payer");
+      }
 
       await tx.balanceLedgerEntry.create({
         data: {
