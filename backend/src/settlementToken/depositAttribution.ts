@@ -278,7 +278,6 @@ export async function resolveHoldingDepositorParty(
       const depositor = await resolveDepositorFromAcceptTransaction(tx.events, amount);
       if (depositor) return depositor;
     } catch {
-      // Fall through to single-participant fallback.
     }
   }
 

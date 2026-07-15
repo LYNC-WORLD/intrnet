@@ -767,7 +767,7 @@ export class LedgerClient {
       if (disabled) return;
       try {
         if (lastOffset === null) {
-          // Shared devnet ledgers are huge — never replay from offset 0 (nginx returns 413).
+          // Never replay from offset 0 on shared ledgers (nginx 413).
           lastOffset = await this.getLedgerEnd();
         }
 
@@ -856,7 +856,19 @@ export class LedgerClient {
 }
 
 export const partyClient = (token: string, actAsParty: string) => new LedgerClient(token, undefined, actAsParty);
-export const operatorAdminClient = async () =>
-  new LedgerClient(getOperatorLedgerToken, undefined, requireConfiguredOperatorParty());
-export const operatorClient = async () =>
-  new LedgerClient(getOperatorLedgerToken, undefined, requireConfiguredOperatorParty());
+
+let cachedOperatorClient: LedgerClient | null = null;
+
+export async function operatorClient(): Promise<LedgerClient> {
+  if (!cachedOperatorClient) {
+    cachedOperatorClient = new LedgerClient(
+      getOperatorLedgerToken,
+      undefined,
+      requireConfiguredOperatorParty(),
+    );
+  }
+  return cachedOperatorClient;
+}
+
+/** @deprecated alias — same singleton as operatorClient */
+export const operatorAdminClient = operatorClient;

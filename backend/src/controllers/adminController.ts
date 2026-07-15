@@ -12,11 +12,15 @@ import {
   getPartyBalance,
 } from "../services/balanceService";
 import { getSettlementCurrency } from "../config/settlementToken";
+import { parsePagination } from "../utils/pagination";
 
 export const listCompanies = asyncHandler(async (req: Request, res: Response) => {
-  const { agreementId } = req.query as Record<string, string | undefined>;
-  const companies = await adminService.listCompanies(agreementId);
-  return res.json({ success: true, data: companies });
+  const { agreementId, page, limit } = req.query as Record<string, string | undefined>;
+  const result = await adminService.listCompanies({
+    agreementId,
+    ...parsePagination({ page, limit }),
+  });
+  return res.json({ success: true, data: result });
 });
 
 export const listParties = asyncHandler(async (_req: Request, res: Response) => {
@@ -159,4 +163,13 @@ export const pqsHealth = asyncHandler(async (_req: Request, res: Response) => {
   const result = await pqsHealthCheck();
   const statusCode = result.connected ? 200 : 503;
   return res.status(statusCode).json({ success: result.connected, data: result });
+});
+
+export const dashboard = asyncHandler(async (req: Request, res: Response) => {
+  const { limit } = req.query as Record<string, string | undefined>;
+  const parsedLimit = limit ? parseInt(limit, 10) : 10;
+  const data = await adminService.getDashboard(
+    Number.isFinite(parsedLimit) ? parsedLimit : 10,
+  );
+  return res.json({ success: true, data });
 });

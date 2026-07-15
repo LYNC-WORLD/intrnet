@@ -99,7 +99,6 @@ function selectDepositHoldingCids(params: {
 
   if (matching.length === 0) return [];
 
-  // One inbound transfer creates one custody holding equal to the transfer amount.
   return [matching[0]];
 }
 
@@ -159,41 +158,43 @@ async function reconcileArchivedDepositCredits(params: {
 
   const client = await operatorClient();
   const staleRevoked: DepositReconcileResult["staleRevoked"] = [];
+  const CONCURRENCY = 8;
+  const candidates = deposits.filter(
+    (deposit) => deposit.referenceId && !activeIds.has(deposit.referenceId),
+  );
 
-  for (const deposit of deposits) {
-    const holdingContractId = deposit.referenceId;
-    if (!holdingContractId || activeIds.has(holdingContractId)) continue;
+  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+    const chunk = candidates.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map(async (deposit) => {
+        const holdingContractId = deposit.referenceId!;
+        const lifecycle = await client.fetchContractLifecycle(holdingContractId);
+        if (!lifecycle?.archived) return null;
 
-    const lifecycle = await client.fetchContractLifecycle(holdingContractId);
-    if (!lifecycle?.archived) continue;
-
-    const result = await revokeStaleDepositCredit({
-      holdingContractId,
-      createdBy: params.createdBy,
-    }).catch((err) => {
-      console.warn(
-        `Skipped stale deposit revoke for ${holdingContractId}:`,
-        err instanceof Error ? err.message : err,
-      );
-      return { revoked: false as const };
-    });
-    if (!result.revoked) continue;
-
-    staleRevoked.push({
-      partyId: deposit.partyId,
-      amount: result.amount ?? toNumber(deposit.amount),
-      holdingContractId,
-    });
+        const result = await revokeStaleDepositCredit({
+          holdingContractId,
+          createdBy: params.createdBy,
+        }).catch((err) => {
+          console.warn(
+            `Skipped stale deposit revoke for ${holdingContractId}:`,
+            err instanceof Error ? err.message : err,
+          );
+          return { revoked: false as const };
+        });
+        if (!result.revoked) return null;
+        return {
+          partyId: deposit.partyId,
+          amount: result.amount ?? toNumber(deposit.amount),
+          holdingContractId,
+        };
+      }),
+    );
+    for (const item of results) {
+      if (item) staleRevoked.push(item);
+    }
   }
 
   return staleRevoked;
-}
-
-export async function reconcileStaleDepositsForParty(
-  partyId: string,
-  createdBy?: string,
-): Promise<DepositReconcileResult["staleRevoked"]> {
-  return reconcileArchivedDepositCredits({ partyId, createdBy });
 }
 
 export async function reconcileDeposits(createdBy?: string): Promise<DepositReconcileResult> {

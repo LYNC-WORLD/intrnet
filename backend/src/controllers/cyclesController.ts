@@ -2,12 +2,19 @@ import { Request, Response } from "express";
 import * as cyclesService from "../services/cyclesService";
 import { asyncHandler } from "../utils/asyncHandler";
 import { isServiceError, sendServiceError } from "../utils/http";
+import { parsePagination } from "../utils/pagination";
 
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const { role, agreementId: userAgreementId } = req.user;
-  const { agreementId } = req.query as Record<string, string>;
-  const cycles = await cyclesService.listCycles(role, userAgreementId, agreementId);
-  return res.json({ success: true, data: cycles });
+  const { agreementId, page, limit } = req.query as Record<string, string>;
+  const pagination = parsePagination({ page, limit });
+  const result = await cyclesService.listCycles({
+    role,
+    userAgreementId,
+    agreementId,
+    ...pagination,
+  });
+  return res.json({ success: true, data: result });
 });
 
 export const getById = asyncHandler(async (req: Request, res: Response) => {

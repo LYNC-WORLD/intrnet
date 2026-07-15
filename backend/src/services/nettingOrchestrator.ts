@@ -17,29 +17,35 @@ async function markObligationsAsNetted(obligationCids: string[]) {
   if (obligationCids.length === 0) return;
 
   const client = await operatorClient();
-  for (const obCid of obligationCids) {
-    const obligation = await getObligation(obCid);
-    if (!obligation) {
-      throw new Error(`Obligation not found while marking as netted: ${obCid}`);
-    }
-    if (obligation.status === "NETTED") continue;
-    if (obligation.status !== "ACCEPTED") {
-      throw new Error(
-        `Obligation ${obligation.invoiceRef} is ${obligation.status}; expected ACCEPTED before MarkAsNetted`,
-      );
-    }
+  const CONCURRENCY = 5;
+  for (let i = 0; i < obligationCids.length; i += CONCURRENCY) {
+    const chunk = obligationCids.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      chunk.map(async (obCid) => {
+        const obligation = await getObligation(obCid);
+        if (!obligation) {
+          throw new Error(`Obligation not found while marking as netted: ${obCid}`);
+        }
+        if (obligation.status === "NETTED") return;
+        if (obligation.status !== "ACCEPTED") {
+          throw new Error(
+            `Obligation ${obligation.invoiceRef} is ${obligation.status}; expected ACCEPTED before MarkAsNetted`,
+          );
+        }
 
-    const markResult = await client.exercise({
-      templateId: T.Obligation,
-      contractId: obligation.contractId,
-      choice: "MarkAsNetted",
-      argument: {},
-    });
-    await auditLedgerExercise(
-      T.Obligation,
-      "MarkAsNetted",
-      obligation.contractId,
-      markResult.events,
+        const markResult = await client.exercise({
+          templateId: T.Obligation,
+          contractId: obligation.contractId,
+          choice: "MarkAsNetted",
+          argument: {},
+        });
+        await auditLedgerExercise(
+          T.Obligation,
+          "MarkAsNetted",
+          obligation.contractId,
+          markResult.events,
+        );
+      }),
     );
   }
 }

@@ -19,7 +19,6 @@ export const openApiComponents = {
       required: ["error"],
     },
 
-    // --- Envelopes ---
     ApiSuccessEnvelope: {
       type: "object",
       properties: { success: { type: "boolean", example: true } },
@@ -31,7 +30,6 @@ export const openApiComponents = {
       required: ["ok"],
     },
 
-    // --- Auth & users ---
     UserProfile: {
       type: "object",
       description: "App user profile returned after login or from /me",
@@ -106,7 +104,6 @@ export const openApiComponents = {
       ],
     },
 
-    // --- Onboarding ---
     OnboardingRequest: {
       type: "object",
       properties: {
@@ -205,7 +202,6 @@ export const openApiComponents = {
       required: ["email", "status"],
     },
 
-    // --- Ledger primitives ---
     LedgerContractCreate: {
       type: "object",
       description: "Result of a ledger contract create",
@@ -235,7 +231,6 @@ export const openApiComponents = {
       required: ["newContractId"],
     },
 
-    // --- Agreements ---
     Agreement: {
       type: "object",
       properties: {
@@ -263,7 +258,6 @@ export const openApiComponents = {
       required: ["contractId"],
     },
 
-    // --- FX ---
     FxRate: {
       type: "object",
       properties: {
@@ -276,7 +270,6 @@ export const openApiComponents = {
       required: ["contractId", "fromCurrency", "toCurrency", "rate", "asOf"],
     },
 
-    // --- Obligations ---
     Obligation: {
       type: "object",
       properties: {
@@ -314,8 +307,25 @@ export const openApiComponents = {
       },
       required: ["obligations", "total", "page"],
     },
+    CycleListData: {
+      type: "object",
+      properties: {
+        cycles: { type: "array", items: { $ref: "#/components/schemas/NettingCycle" } },
+        total: { type: "integer" },
+        page: { type: "integer" },
+      },
+      required: ["cycles", "total", "page"],
+    },
+    CompanyListData: {
+      type: "object",
+      properties: {
+        companies: { type: "array", items: { $ref: "#/components/schemas/CompanySummary" } },
+        total: { type: "integer" },
+        page: { type: "integer" },
+      },
+      required: ["companies", "total", "page"],
+    },
 
-    // --- Cycles ---
     InstructionCounts: {
       type: "object",
       properties: {
@@ -393,7 +403,6 @@ export const openApiComponents = {
       ],
     },
 
-    // --- Positions & settlement ---
     NetPosition: {
       type: "object",
       properties: {
@@ -448,7 +457,6 @@ export const openApiComponents = {
       },
     },
 
-    // --- Admin / infra ---
     PqsHealth: {
       type: "object",
       properties: {
@@ -463,7 +471,6 @@ export const openApiComponents = {
       required: ["connected", "agreementCount", "cycleCount", "obligationCount", "settlementInstructionCount"],
     },
 
-    // --- Requests ---
     OAuthLoginRequest: {
       type: "object",
       properties: { token: { type: "string", description: "OAuth access token from Auth0" } },
@@ -601,7 +608,6 @@ export const openApiComponents = {
         },
       },
     },
-    // --- Typed success responses (success + data) ---
     OnboardingSubmitResponse: {
       allOf: [
         { $ref: "#/components/schemas/ApiSuccessEnvelope" },
@@ -669,9 +675,17 @@ export const openApiComponents = {
         { $ref: "#/components/schemas/ApiSuccessEnvelope" },
         {
           type: "object",
-          properties: {
-            data: { type: "array", items: { $ref: "#/components/schemas/NettingCycle" } },
-          },
+          properties: { data: { $ref: "#/components/schemas/CycleListData" } },
+          required: ["data"],
+        },
+      ],
+    },
+    CompanyListResponse: {
+      allOf: [
+        { $ref: "#/components/schemas/ApiSuccessEnvelope" },
+        {
+          type: "object",
+          properties: { data: { $ref: "#/components/schemas/CompanyListData" } },
           required: ["data"],
         },
       ],
@@ -766,7 +780,7 @@ function itemResponse(itemRef: string) {
 }
 
 export const routeResponseSchemas = {
-  companyList: listResponse("#/components/schemas/CompanySummary"),
+  companyList: { $ref: "#/components/schemas/CompanyListResponse" },
   partyList: listResponse("#/components/schemas/LedgerParty"),
   onboardingRequestList: listResponse("#/components/schemas/OnboardingRequestWithUser"),
   onboardingRequestDetail: itemResponse("#/components/schemas/OnboardingRequestWithUser"),

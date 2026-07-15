@@ -98,11 +98,3 @@ export async function resolveInstrumentAdmin(): Promise<string> {
 
   return getOperatorPartyId();
 }
-
-export function isHoldingContract(templateId: string): boolean {
-  return templateId.includes("HoldingV1:Holding");
-}
-
-export function isTransferInstructionContract(templateId: string): boolean {
-  return templateId.includes("TransferInstructionV1:TransferInstruction");
-}

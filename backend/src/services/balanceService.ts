@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { getSettlementCurrency } from "../config/settlementToken";
 import { getOperatorPartyId } from "../ledger/operatorParty";
-import { listTokenHoldings } from "../settlementToken/holdingsService";
+import { listTokenHoldings, type TokenHolding } from "../settlementToken/holdingsService";
 import { assertPositiveAmount, decimalAmount, toNumber } from "../utils/amount";
 
 export interface PartyBalanceView {
@@ -54,6 +54,30 @@ export async function hasLedgerEntry(
   return entry !== null;
 }
 
+export async function getSettlementEntryFlags(instructionCid: string): Promise<{
+  hasCredit: boolean;
+  hasDebit: boolean;
+  hasPayout: boolean;
+  hasTransfer: boolean;
+  hasReserve: boolean;
+}> {
+  const entries = await prisma.balanceLedgerEntry.findMany({
+    where: {
+      instructionCid,
+      entryType: { in: ["CREDIT", "DEBIT", "PAYOUT", "TRANSFER", "RESERVE"] },
+    },
+    select: { entryType: true },
+  });
+  const types = new Set(entries.map((entry) => entry.entryType));
+  return {
+    hasCredit: types.has("CREDIT"),
+    hasDebit: types.has("DEBIT"),
+    hasPayout: types.has("PAYOUT"),
+    hasTransfer: types.has("TRANSFER"),
+    hasReserve: types.has("RESERVE"),
+  };
+}
+
 export async function getSettlementTransferReference(instructionCid: string): Promise<string | null> {
   const entry = await prisma.balanceLedgerEntry.findUnique({
     where: { instructionCid_entryType: { instructionCid, entryType: "TRANSFER" } },
@@ -73,17 +97,36 @@ export async function findUnsettledReserveCids(
     select: { instructionCid: true, partyId: true, amount: true },
   });
 
-  const unsettled: Array<{ instructionCid: string; partyId: string; amount: number }> = [];
-  for (const reserve of reserves) {
-    if (!reserve.instructionCid) continue;
-    if (await hasLedgerEntry(reserve.instructionCid, "DEBIT")) continue;
-    unsettled.push({
-      instructionCid: reserve.instructionCid,
+  const instructionCids = [
+    ...new Set(
+      reserves
+        .map((reserve) => reserve.instructionCid)
+        .filter((cid): cid is string => Boolean(cid)),
+    ),
+  ];
+  if (instructionCids.length === 0) return [];
+
+  const debits = await prisma.balanceLedgerEntry.findMany({
+    where: {
+      entryType: "DEBIT",
+      instructionCid: { in: instructionCids },
+    },
+    select: { instructionCid: true },
+  });
+  const debited = new Set(debits.map((entry) => entry.instructionCid).filter(Boolean));
+
+  return reserves
+    .filter((reserve) => reserve.instructionCid && !debited.has(reserve.instructionCid))
+    .map((reserve) => ({
+      instructionCid: reserve.instructionCid!,
       partyId: reserve.partyId,
       amount: toNumber(reserve.amount),
-    });
-  }
-  return unsettled;
+    }));
+}
+
+export async function hasUnsettledReserve(partyId: string): Promise<boolean> {
+  const unsettled = await findUnsettledReserveCids(partyId);
+  return unsettled.length > 0;
 }
 
 export async function resolveSettlementBookkeepingCid(
@@ -91,11 +134,8 @@ export async function resolveSettlementBookkeepingCid(
   paymentReference?: string | null,
   hint?: { payer: string; amount: number },
 ): Promise<string> {
-  if (
-    (await hasLedgerEntry(contractId, "TRANSFER")) ||
-    (await hasLedgerEntry(contractId, "RESERVE")) ||
-    (await hasLedgerEntry(contractId, "DEBIT"))
-  ) {
+  const flags = await getSettlementEntryFlags(contractId);
+  if (flags.hasTransfer || flags.hasReserve || flags.hasDebit) {
     return contractId;
   }
 
@@ -175,10 +215,13 @@ export async function listDepositHoldingIdsForParty(partyId: string): Promise<st
   return holdingIds.filter((holdingId) => !reversed.has(holdingId));
 }
 
-export async function listActiveDepositHoldingIdsForParty(partyId: string): Promise<string[]> {
-  const custodyPartyId = await getOperatorPartyId();
+export async function listActiveDepositHoldingIdsForParty(
+  partyId: string,
+  custodyHoldings?: TokenHolding[],
+): Promise<string[]> {
   const recordedHoldingIds = await listDepositHoldingIdsForParty(partyId);
-  const activeHoldings = await listTokenHoldings(custodyPartyId);
+  const activeHoldings =
+    custodyHoldings ?? (await listTokenHoldings(await getOperatorPartyId()));
   const activeById = new Map(activeHoldings.map((holding) => [holding.contractId, holding]));
 
   const activeRecorded = recordedHoldingIds.filter((holdingId) => activeById.has(holdingId));
@@ -193,24 +236,6 @@ export async function listActiveDepositHoldingIdsForParty(partyId: string): Prom
   }
 
   return activeRecorded;
-}
-
-export async function hasUnsettledReserve(partyId: string): Promise<boolean> {
-  const reserves = await prisma.balanceLedgerEntry.findMany({
-    where: { partyId, entryType: "RESERVE", instructionCid: { not: null } },
-    select: { instructionCid: true },
-  });
-
-  for (const reserve of reserves) {
-    if (!reserve.instructionCid) continue;
-    const debited = await prisma.balanceLedgerEntry.findUnique({
-      where: {
-        instructionCid_entryType: { instructionCid: reserve.instructionCid, entryType: "DEBIT" },
-      },
-    });
-    if (!debited) return true;
-  }
-  return false;
 }
 
 export async function revokeStaleDepositCredit(params: {

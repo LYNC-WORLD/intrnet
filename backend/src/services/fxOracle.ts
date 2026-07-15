@@ -83,7 +83,16 @@ export async function refreshFxRates() {
     const now = data.time_last_update_utc
       ? new Date(data.time_last_update_utc).toISOString()
       : new Date().toISOString();
-    const existing = await client.query(T.FxRateOracle, undefined, { currentPackageOnly: true });
+    const { listFxRates: pqsListFxRates } = await import("../repositories/pqsLedgerReadRepository");
+    const existingRates = await pqsListFxRates(undefined, FX_ORACLE_TARGET_CURRENCY);
+    const existing = existingRates.map((rate) => ({
+      contractId: rate.contractId,
+      payload: {
+        fromCurrency: rate.fromCurrency,
+        toCurrency: rate.toCurrency,
+        rate: String(rate.rate),
+      },
+    }));
 
     for (const currency of CURRENCIES) {
       const rate = rates[currency];

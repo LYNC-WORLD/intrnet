@@ -17,6 +17,7 @@ export async function listObligations(params: {
   status?: string;
   role?: string;
   currency?: string;
+  cycleId?: string;
   page: number;
   limit: number;
 }) {

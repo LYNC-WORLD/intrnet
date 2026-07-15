@@ -7,7 +7,3 @@ export function getCachedPartyByHint(hint: string): string | undefined {
 export function cachePartyByHint(hint: string, partyId: string): void {
   hintToPartyId.set(hint, partyId);
 }
-
-export function clearPartyHintCache(): void {
-  hintToPartyId.clear();
-}

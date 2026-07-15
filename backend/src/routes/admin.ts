@@ -5,6 +5,7 @@ import { authenticateOAuth, requireOperator } from "../middleware/auth";
 const router = Router();
 
 router.get("/companies", authenticateOAuth, requireOperator, adminController.listCompanies);
+router.get("/dashboard", authenticateOAuth, requireOperator, adminController.dashboard);
 router.get("/parties", authenticateOAuth, requireOperator, adminController.listParties);
 router.get("/onboarding/requests", authenticateOAuth, requireOperator, adminController.listOnboardingRequests);
 router.get("/onboarding/requests/:id", authenticateOAuth, requireOperator, adminController.getOnboardingRequest);

@@ -7,17 +7,6 @@ export interface TokenClaims {
   readAs?: string[];
 }
 
-export interface LegacyCreatedEvent {
-  contractId: string;
-  templateId: string;
-  payload: Record<string, unknown>;
-}
-
-export interface LegacyArchivedEvent {
-  contractId: string;
-  templateId: string;
-}
-
 export interface CreatedEventRef {
   contractId: string;
   templateId: string;
@@ -53,12 +42,6 @@ export function qualifyTemplateId(templateId: string, packageId: string): string
   return `${packageId}:${templateId}`;
 }
 
-export function resolvePartyHint(hint: string, knownParties: string[]): string {
-  if (hint.includes("::")) return hint;
-  const match = knownParties.find((p) => p === hint || p.startsWith(`${hint}::`));
-  return match ?? hint;
-}
-
 export function wildcardEventFormat(parties: string[]) {
   const filtersByParty: Record<string, unknown> = {};
   for (const party of parties) {
@@ -87,24 +70,6 @@ export function interfaceEventFormat(parties: string[], interfaceId: string) {
         },
       ],
     };
-  }
-  return { filtersByParty };
-}
-
-export function templateEventFormat(parties: string[], templateIds: string[], packageId: string) {
-  const cumulative = templateIds.map((templateId) => ({
-    identifierFilter: {
-      TemplateFilter: {
-        value: {
-          templateId: qualifyTemplateId(templateId, packageId),
-          includeCreatedEventBlob: false,
-        },
-      },
-    },
-  }));
-  const filtersByParty: Record<string, unknown> = {};
-  for (const party of parties) {
-    filtersByParty[party] = { cumulative };
   }
   return { filtersByParty };
 }

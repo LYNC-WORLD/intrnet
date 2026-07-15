@@ -8,6 +8,13 @@ import {
 import { ExerciseEvents, extractExerciseContractId, matchesTemplate } from "../ledger/v2";
 import { parsePositiveAmount } from "../utils/amount";
 import {
+  amountsMatch,
+  PARTY_ID_PATTERN,
+  parseInstrument,
+  shouldEnforceInstrumentAdmin,
+  toLedgerDisclosed,
+} from "./shared";
+import {
   parseDepositorPartyFromInstructionPayload,
   parseSettlementInstructionCidFromMeta,
 } from "./metadata";
@@ -17,7 +24,7 @@ import {
   resolveReceiverHoldingCidsFromUpdate,
   resolveTransferInstructionDepositor,
 } from "./depositAttribution";
-import { DisclosedContract, getTransferInstructionContext } from "./registryClient";
+import { getTransferInstructionContext } from "./registryClient";
 
 export interface PendingIncomingTransfer {
   contractId: string;
@@ -43,33 +50,8 @@ export interface AcceptTransfersResult {
   failed: Array<{ contractId: string; error: string }>;
 }
 
-const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
-
 async function resolveLedgerClient(client?: LedgerClient): Promise<LedgerClient> {
   return client ?? (await operatorClient());
-}
-
-function amountsMatch(left: number, right: number): boolean {
-  return Math.abs(left - right) < 0.00000001;
-}
-
-function toLedgerDisclosed(disclosed: DisclosedContract[]) {
-  return disclosed.map((d) => ({
-    templateId: d.templateId,
-    contractId: d.contractId,
-    createdEventBlob: d.createdEventBlob,
-    ...(d.synchronizerId ? { synchronizerId: d.synchronizerId } : {}),
-  }));
-}
-
-function parseInstrument(payload: Record<string, unknown>): { id: string; admin: string | null } | null {
-  const instrument = payload.instrumentId ?? payload.instrument;
-  if (!instrument || typeof instrument !== "object") return null;
-  const record = instrument as Record<string, unknown>;
-  const id = typeof record.id === "string" ? record.id : null;
-  if (!id) return null;
-  const admin = typeof record.admin === "string" ? record.admin : null;
-  return { id, admin };
 }
 
 function parseTransferRecord(payload: Record<string, unknown>): Record<string, unknown> | null {
@@ -103,10 +85,6 @@ function isPendingReceiverAcceptance(status: unknown): boolean {
     }
   }
   return false;
-}
-
-function shouldEnforceInstrumentAdmin(): boolean {
-  return Boolean(process.env.SETTLEMENT_INSTRUMENT_ADMIN?.trim());
 }
 
 function extractReceiverHoldingCids(
@@ -175,6 +153,106 @@ export function findSettlementPendingTransfer(
   return null;
 }
 
+function parsePendingIncomingTransfer(
+  contractId: string,
+  payload: Record<string, unknown>,
+  receiver: string,
+  instrumentId: string,
+  expectedAdmin: string | null,
+  enforceAdmin: boolean,
+): PendingIncomingTransfer | null {
+  if (!isPendingReceiverAcceptance(payload.status)) return null;
+
+  const transfer = parseTransferRecord(payload);
+  if (!transfer) return null;
+
+  const transferReceiver =
+    (typeof transfer.receiver === "string" && transfer.receiver) || null;
+  if (!transferReceiver || transferReceiver !== receiver) return null;
+
+  const instrument = parseInstrument(transfer);
+  if (!instrument || instrument.id !== instrumentId) return null;
+  if (enforceAdmin && instrument.admin && expectedAdmin && instrument.admin !== expectedAdmin) {
+    return null;
+  }
+
+  const sender = typeof transfer.sender === "string" ? transfer.sender : null;
+  if (!sender || !PARTY_ID_PATTERN.test(sender)) return null;
+
+  const amount = parsePositiveAmount(transfer.amount);
+  if (amount === null) return null;
+
+  const settlementInstructionCid =
+    parseSettlementInstructionCidFromMeta(transfer.meta) ??
+    parseSettlementInstructionCidFromMeta(payload.meta);
+
+  return {
+    contractId,
+    sender,
+    receiver: transferReceiver,
+    amount,
+    instrumentId: instrument.id,
+    depositorPartyId: parseDepositorPartyFromInstructionPayload(payload),
+    settlementInstructionCid,
+  };
+}
+
+//Resolve pending TransferInstruction from execute updateId 
+export async function findPendingIncomingTransferByUpdateId(
+  updateId: string,
+  receiverPartyId: string,
+  client?: LedgerClient,
+): Promise<{ pending: PendingIncomingTransfer | null; skipAcsFallback: boolean }> {
+  const updateRef = updateId.trim();
+  if (!updateRef) return { pending: null, skipAcsFallback: false };
+
+  const ledger = await resolveLedgerClient(client);
+  const { instrumentId } = getTokenConfig();
+  const expectedAdmin = await resolveInstrumentAdmin();
+  const enforceAdmin = shouldEnforceInstrumentAdmin();
+
+  let events: Array<Record<string, unknown>>;
+  try {
+    events = await ledger.fetchTransactionEventsByUpdateId(updateRef);
+  } catch (err) {
+    console.warn(
+      `Failed to load transfer update ${updateRef} for pending offer lookup:`,
+      err instanceof Error ? err.message : err,
+    );
+    return { pending: null, skipAcsFallback: false };
+  }
+
+  let sawInstruction = false;
+  for (const event of events) {
+    const created = event.CreatedEvent as Record<string, unknown> | undefined;
+    if (!created) continue;
+    const templateId = created.templateId;
+    if (typeof templateId !== "string") continue;
+    if (
+      !matchesTemplate(templateId, "TransferInstructionV1:TransferInstruction") &&
+      !templateId.includes("TransferInstruction")
+    ) {
+      continue;
+    }
+    const contractId = created.contractId;
+    if (typeof contractId !== "string") continue;
+    sawInstruction = true;
+
+    const payload = (created.createArgument ?? created.payload ?? {}) as Record<string, unknown>;
+    const pending = parsePendingIncomingTransfer(
+      contractId,
+      payload,
+      receiverPartyId,
+      instrumentId,
+      expectedAdmin,
+      enforceAdmin,
+    );
+    if (pending) return { pending, skipAcsFallback: true };
+  }
+
+  return { pending: null, skipAcsFallback: sawInstruction };
+}
+
 export async function listPendingIncomingTransfers(
   receiverPartyId?: string,
   client?: LedgerClient,
@@ -191,39 +269,15 @@ export async function listPendingIncomingTransfers(
 
   const pending: PendingIncomingTransfer[] = [];
   for (const contract of contracts) {
-    const payload = contract.payload;
-    if (!isPendingReceiverAcceptance(payload.status)) continue;
-
-    const transfer = parseTransferRecord(payload);
-    if (!transfer) continue;
-
-    const transferReceiver =
-      (typeof transfer.receiver === "string" && transfer.receiver) || null;
-    if (!transferReceiver || transferReceiver !== receiver) continue;
-
-    const instrument = parseInstrument(transfer);
-    if (!instrument || instrument.id !== instrumentId) continue;
-    if (enforceAdmin && instrument.admin && instrument.admin !== expectedAdmin) continue;
-
-    const sender = typeof transfer.sender === "string" ? transfer.sender : null;
-    if (!sender || !PARTY_ID_PATTERN.test(sender)) continue;
-
-    const amount = parsePositiveAmount(transfer.amount);
-    if (amount === null) continue;
-
-    const settlementInstructionCid =
-      parseSettlementInstructionCidFromMeta(transfer.meta) ??
-      parseSettlementInstructionCidFromMeta(payload.meta);
-
-    pending.push({
-      contractId: contract.contractId,
-      sender,
-      receiver: transferReceiver,
-      amount,
-      instrumentId: instrument.id,
-      depositorPartyId: parseDepositorPartyFromInstructionPayload(payload),
-      settlementInstructionCid,
-    });
+    const match = parsePendingIncomingTransfer(
+      contract.contractId,
+      contract.payload,
+      receiver,
+      instrumentId,
+      expectedAdmin,
+      enforceAdmin,
+    );
+    if (match) pending.push(match);
   }
 
   return pending;
@@ -232,6 +286,7 @@ export async function listPendingIncomingTransfers(
 export async function acceptIncomingTransfer(
   instruction: PendingIncomingTransfer,
   client?: LedgerClient,
+  options?: { skipAttribution?: boolean },
 ): Promise<AcceptedIncomingTransfer> {
   const context = await getTransferInstructionContext(instruction.contractId, "accept");
   const ledger = await resolveLedgerClient(client);
@@ -248,18 +303,20 @@ export async function acceptIncomingTransfer(
     disclosedContracts: toLedgerDisclosed(context.disclosedContracts),
   });
 
-  let receiverHoldingCids = extractReceiverHoldingCids(
-    result.exerciseResult,
-    result.events,
-    result.rawEvents,
-  );
-  if (receiverHoldingCids.length === 0 && result.updateId) {
-    receiverHoldingCids = await resolveReceiverHoldingCidsFromUpdate(result.updateId);
-  }
-
+  let receiverHoldingCids: string[] = [];
   let depositorPartyId = instruction.depositorPartyId;
-  if (!depositorPartyId) {
-    depositorPartyId = await resolveTransferInstructionDepositor(instruction.contractId);
+  if (!options?.skipAttribution) {
+    receiverHoldingCids = extractReceiverHoldingCids(
+      result.exerciseResult,
+      result.events,
+      result.rawEvents,
+    );
+    if (receiverHoldingCids.length === 0 && result.updateId) {
+      receiverHoldingCids = await resolveReceiverHoldingCidsFromUpdate(result.updateId);
+    }
+    if (!depositorPartyId) {
+      depositorPartyId = await resolveTransferInstructionDepositor(instruction.contractId);
+    }
   }
 
   return {

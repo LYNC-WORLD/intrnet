@@ -1,4 +1,3 @@
-/** OpenAPI 3.0 document for the Intrnet REST API. Served at /api/docs */
 import { openApiComponents, routeResponseSchemas } from "./schemas";
 
 const json = (schema: object) => ({
@@ -122,10 +121,12 @@ export const openApiSpec = {
             schema: { type: "string" },
             description: "Optional filter by agreement",
           },
+          { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
         ],
         responses: {
           "200": {
-            description: "Active participant companies",
+            description: "Paginated active participant companies",
             content: json(routeResponseSchemas.companyList),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -284,6 +285,72 @@ export const openApiSpec = {
         responses: {
           "200": { description: "Registry instruments and discovered admin", content: json({ type: "object" }) },
           "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/api/admin/dashboard": {
+      get: {
+        tags: ["Admin"],
+        summary: "Admin dashboard summary and recent activity",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", default: 10, minimum: 1, maximum: 50 },
+            description: "Max recent activity items",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Dashboard summary cards and recent activity",
+            content: json({
+              type: "object",
+              properties: {
+                success: { type: "boolean" },
+                data: {
+                  type: "object",
+                  properties: {
+                    summary: {
+                      type: "object",
+                      properties: {
+                        totalUsers: { type: "integer" },
+                        whitelistRequests: { type: "integer" },
+                        cycles: { type: "integer" },
+                        totalAgreements: { type: "integer" },
+                        obligations: { type: "integer" },
+                      },
+                      required: [
+                        "totalUsers",
+                        "whitelistRequests",
+                        "cycles",
+                        "totalAgreements",
+                        "obligations",
+                      ],
+                    },
+                    recentActivity: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          kind: { type: "string", enum: ["ledger", "whitelist"] },
+                          title: { type: "string" },
+                          description: { type: "string" },
+                          status: { type: "string" },
+                          timestamp: { type: "string", format: "date-time" },
+                        },
+                      },
+                    },
+                    updatedAt: { type: "string", format: "date-time" },
+                  },
+                },
+              },
+            }),
+          },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "403": { $ref: "#/components/responses/Forbidden" },
         },
@@ -501,6 +568,14 @@ export const openApiSpec = {
           },
           { name: "currency", in: "query", required: false, schema: { type: "string" } },
           { name: "agreementId", in: "query", required: false, schema: { type: "string" } },
+          {
+            name: "cycleId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description:
+              "Stable cycleId or cycle contract id. Returns only obligations in that cycle where the caller is payer or receiver.",
+          },
           { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
         ],
@@ -598,10 +673,12 @@ export const openApiSpec = {
             schema: { type: "string" },
             description: "Optional; participants are scoped to their agreement",
           },
+          { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
         ],
         responses: {
           "200": {
-            description: "Netting cycles",
+            description: "Paginated netting cycles",
             content: json({ $ref: "#/components/schemas/CycleListResponse" }),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },

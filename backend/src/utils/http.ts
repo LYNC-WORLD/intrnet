@@ -11,6 +11,17 @@ export function sendServiceError(res: Response, result: ServiceError) {
   return res.status(result.status).json({ error: result.error });
 }
 
+export function sendResult(res: Response, result: unknown, opts?: { status?: number }) {
+  if (isServiceError(result)) return sendServiceError(res, result);
+  if (result && typeof result === "object" && "data" in result) {
+    return res.status(opts?.status ?? 200).json({
+      success: true,
+      data: (result as { data: unknown }).data,
+    });
+  }
+  return res.status(opts?.status ?? 200).json({ success: true, data: result });
+}
+
 export function extractErrorMessage(err: unknown): string {
   if (err instanceof AxiosError) {
     const data = err.response?.data as Record<string, unknown> | string | undefined;

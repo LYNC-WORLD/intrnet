@@ -1,4 +1,4 @@
-import axios, { isAxiosError } from "axios";
+import { isAxiosError } from "axios";
 import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
@@ -6,20 +6,20 @@ import {
   TRANSFER_FACTORY_INTERFACE_ID,
 } from "../config/settlementToken";
 import { assertPositiveAmount, formatRegistryTokenAmount } from "../utils/amount";
-import { getTransferFactory, DisclosedContract, TransferFactoryResult } from "./registryClient";
+import { getTransferFactory, TransferFactoryResult } from "./registryClient";
 import {
-  enumerateHoldingCandidates,
   listTokenHoldings,
   SelectedHoldings,
   selectHoldingsForAmount,
+  type TokenHolding,
 } from "./holdingsService";
+import { PARTY_ID_PATTERN, toLedgerDisclosed } from "./shared";
 
 export interface TransferResult {
   paymentReference: string;
   transferKind?: string;
 }
 
-const PARTY_ID_PATTERN = /^[^:]+::[0-9a-f]+$/i;
 const REQUESTED_AT_SKEW_MS = 1000;
 const LOG_PREFIX = "[SettlementTransfer]";
 const MAX_FACTORY_ATTEMPTS_PER_CANDIDATE = 3;
@@ -38,15 +38,6 @@ function logTransferDebug(message: string, details?: Record<string, unknown>): v
   } else {
     console.warn(`${LOG_PREFIX} ${message}`);
   }
-}
-
-function toLedgerDisclosed(disclosed: DisclosedContract[]) {
-  return disclosed.map((d) => ({
-    templateId: d.templateId,
-    contractId: d.contractId,
-    createdEventBlob: d.createdEventBlob,
-    ...(d.synchronizerId ? { synchronizerId: d.synchronizerId } : {}),
-  }));
 }
 
 function formatTransferError(err: unknown): Error {
@@ -83,8 +74,9 @@ interface HoldingValidation {
 async function validateCandidateHoldings(
   sender: string,
   inputHoldingCids: string[],
+  knownHoldings?: TokenHolding[],
 ): Promise<HoldingValidation> {
-  const activeHoldings = await listTokenHoldings(sender);
+  const activeHoldings = knownHoldings ?? (await listTokenHoldings(sender));
   const activeIds = new Set(activeHoldings.map((holding) => holding.contractId));
   const missingFromAcs = inputHoldingCids.filter((contractId) => !activeIds.has(contractId));
   if (missingFromAcs.length === 0) {
@@ -148,8 +140,13 @@ async function submitTransferForCandidate(params: {
   meta?: Record<string, string>;
   attemptIndex: number;
   factoryAttemptIndex: number;
+  knownHoldings?: TokenHolding[];
 }): Promise<{ factory: TransferFactoryResult; updateId: string }> {
-  const validation = await validateCandidateHoldings(params.sender, params.candidate.inputHoldingCids);
+  const validation = await validateCandidateHoldings(
+    params.sender,
+    params.candidate.inputHoldingCids,
+    params.knownHoldings,
+  );
   if (!validation.ok) {
     const hint =
       validation.archived.length > 0
@@ -261,6 +258,7 @@ export async function executeTokenTransfer(params: {
   receiverPartyId: string;
   amount: number;
   holdingContractIds?: string[];
+  custodyHoldings?: TokenHolding[];
   meta?: Record<string, string>;
 }): Promise<TransferResult> {
   assertPositiveAmount(params.amount, "Transfer amount");
@@ -272,120 +270,76 @@ export async function executeTokenTransfer(params: {
 
   const config = getTokenConfig();
   const sender = await getOperatorPartyId();
+  let knownHoldings = params.custodyHoldings ?? (await listTokenHoldings(sender));
 
-  const depositHoldingFilter =
-    params.holdingContractIds && params.holdingContractIds.length > 0
-      ? params.holdingContractIds
-      : undefined;
-
-  const candidates = await enumerateHoldingCandidates(sender, params.amount, {
-    holdingContractIds: depositHoldingFilter,
-  });
-  let fallback: SelectedHoldings;
-  if (candidates.length > 0) {
-    fallback = candidates[0]!;
-  } else {
-    if (depositHoldingFilter) {
+  let candidate: SelectedHoldings;
+  try {
+    candidate = await selectHoldingsForAmount(sender, params.amount, {
+      holdings: knownHoldings,
+      preferredHoldingIds: params.holdingContractIds,
+    });
+  } catch (err) {
+    if (params.holdingContractIds?.length) {
       throw new Error(
         `No active ${config.instrumentId} custody holdings found for settlement payer deposits. ` +
           "Deposits may have been spent or revoked — run deposit sync and ensure the payer has credited active holdings before execute.",
       );
     }
-    fallback = await selectHoldingsForAmount(sender, params.amount);
+    throw err;
   }
-
-  const attemptCandidates = candidates.length > 0 ? candidates : [fallback];
 
   logTransferDebug("starting transfer", {
     sender,
     receiver,
     amount: params.amount,
-    depositHoldingFilter: params.holdingContractIds ?? null,
-    candidateCount: attemptCandidates.length,
-    candidates: attemptCandidates.map((candidate) => ({
-      inputHoldingCids: candidate.inputHoldingCids,
-      total: candidate.total,
-      instrumentAdmin: candidate.instrumentAdmin,
-    })),
+    preferredHoldingIds: params.holdingContractIds ?? null,
+    inputHoldingCids: candidate.inputHoldingCids,
+    total: candidate.total,
+    instrumentAdmin: candidate.instrumentAdmin,
   });
 
   let lastRetryableError: unknown;
-  const candidateFailures: Array<{
-    attemptIndex: number;
-    factoryAttemptIndex: number;
-    inputHoldingCids: string[];
-    error: string;
-  }> = [];
+  for (let factoryAttemptIndex = 0; factoryAttemptIndex < MAX_FACTORY_ATTEMPTS_PER_CANDIDATE; factoryAttemptIndex++) {
+    try {
+      const { factory, updateId } = await submitTransferForCandidate({
+        candidate,
+        sender,
+        receiver,
+        amount: params.amount,
+        instrumentId: config.instrumentId,
+        transferDeadlineSeconds: config.transferDeadlineSeconds,
+        meta: params.meta,
+        attemptIndex: 0,
+        factoryAttemptIndex,
+        knownHoldings,
+      });
 
-  for (let attemptIndex = 0; attemptIndex < attemptCandidates.length; attemptIndex++) {
-    const candidate = attemptCandidates[attemptIndex]!;
-    for (
-      let factoryAttemptIndex = 0;
-      factoryAttemptIndex < MAX_FACTORY_ATTEMPTS_PER_CANDIDATE;
-      factoryAttemptIndex++
-    ) {
-      try {
-        const { factory, updateId } = await submitTransferForCandidate({
-          candidate,
-          sender,
-          receiver,
-          amount: params.amount,
-          instrumentId: config.instrumentId,
-          transferDeadlineSeconds: config.transferDeadlineSeconds,
-          meta: params.meta,
-          attemptIndex,
-          factoryAttemptIndex,
-        });
-
-        return {
-          paymentReference: updateId,
-          transferKind: factory.transferKind,
-        };
-      } catch (err) {
-        const formatted = formatTransferError(err);
-        if (!isRetryableTransferError(formatted)) throw formatted;
-        lastRetryableError = formatted;
-        candidateFailures.push({
-          attemptIndex,
-          factoryAttemptIndex,
-          inputHoldingCids: candidate.inputHoldingCids,
-          error: formatted.message,
-        });
-        const hasMoreFactoryAttempts =
-          factoryAttemptIndex + 1 < MAX_FACTORY_ATTEMPTS_PER_CANDIDATE;
-        if (hasMoreFactoryAttempts) {
-          logTransferDebug("candidate attempt failed, refreshing factory context", {
-            attemptIndex,
-            factoryAttemptIndex,
-            inputHoldingCids: candidate.inputHoldingCids,
-            error: formatted.message,
-          });
-          continue;
-        }
-        logTransferDebug("candidate failed, trying next", {
-          attemptIndex,
-          factoryAttemptIndex,
-          inputHoldingCids: candidate.inputHoldingCids,
-          error: formatted.message,
+      return {
+        paymentReference: updateId,
+        transferKind: factory.transferKind,
+      };
+    } catch (err) {
+      const formatted = formatTransferError(err);
+      if (!isRetryableTransferError(formatted)) throw formatted;
+      lastRetryableError = formatted;
+      if (INACTIVE_CONTRACT_ERROR_PATTERN.test(formatted.message)) {
+        knownHoldings = await listTokenHoldings(sender);
+        candidate = await selectHoldingsForAmount(sender, params.amount, {
+          holdings: knownHoldings,
+          preferredHoldingIds: params.holdingContractIds,
         });
       }
+      logTransferDebug("transfer attempt failed, retrying factory context", {
+        factoryAttemptIndex,
+        inputHoldingCids: candidate.inputHoldingCids,
+        error: formatted.message,
+      });
     }
   }
 
-  const attempted = attemptCandidates
-    .map((candidate) => candidate.inputHoldingCids.join(","))
-    .join("; ");
-  const inactiveContextFailure = candidateFailures.find((failure) =>
-    INACTIVE_CONTRACT_ERROR_PATTERN.test(failure.error),
-  );
-  if (inactiveContextFailure) {
-    throw new Error(
-      `Transfer-factory returned stale disclosed contracts that are inactive on ledger (candidate #${inactiveContextFailure.attemptIndex}, factory attempt #${inactiveContextFailure.factoryAttemptIndex}, holdings=${inactiveContextFailure.inputHoldingCids.join(",")}). Original error: ${inactiveContextFailure.error}. Attempted holding candidates: ${attempted}`,
-    );
-  }
   const message =
     lastRetryableError instanceof Error
       ? lastRetryableError.message
-      : "Transfer failed for all holding candidates";
-  throw new Error(`${message}. Attempted holding candidates: ${attempted}`);
+      : "Transfer failed";
+  throw new Error(`${message}. holdings=${candidate.inputHoldingCids.join(",")}`);
 }

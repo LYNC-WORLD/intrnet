@@ -102,28 +102,3 @@ export async function updateFxRate(contractId: string, rate: number | string, as
 export async function refreshRates() {
   await refreshFxRates();
 }
-
-export async function getFxRateHistory(
-  fromCurrency?: string,
-  toCurrency?: string,
-  days = 30,
-) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-
-  const where: Record<string, unknown> = { asOf: { gte: since } };
-  if (fromCurrency) where.fromCurrency = fromCurrency;
-  if (toCurrency) {
-    where.toCurrency = normalizeFxToCurrencyForLedger(toCurrency);
-  }
-
-  const rows = await prisma.fxRateHistory.findMany({
-    where,
-    orderBy: { asOf: "desc" },
-  });
-
-  return rows.map((row) => ({
-    ...row,
-    toCurrency: normalizeFxToCurrencyForApi(row.toCurrency),
-  }));
-}
