@@ -115,7 +115,8 @@ export const fxApi = {
 
 // ─── Cycles ──────────────────────────────────────────────────────────────────
 export const cyclesApi = {
-  list: () => api.get("/api/cycles"),
+  list: (params?: { page?: number; limit?: number }) =>
+    api.get("/api/cycles", { params }),
   create: (body: {
     cycleId: string;
     cutoffTime: string;

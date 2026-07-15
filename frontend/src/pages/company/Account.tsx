@@ -19,6 +19,7 @@ import {
 } from "../../components/ui";
 import { fmt } from "../../utils";
 import toast from "react-hot-toast";
+import { Link } from "react-router-dom";
 
 export default function Account() {
   const { data: profile, isLoading: loadingMe } = useMe();
@@ -125,7 +126,14 @@ export default function Account() {
                         ? t.payer.split("::")[0]
                         : t.receiver.split("::")[0]}
                     </Td>
-                    <Td>{t.cycleId}</Td>
+                    <Td>
+                      <Link
+                        to={`/cycles/${t.cycleId}`}
+                        className="text-sm text-bone-500 hover:text-lime-400 hover:underline"
+                      >
+                        {t.cycleId}
+                      </Link>
+                    </Td>
                   </Tr>
                 ))}
               </tbody>
