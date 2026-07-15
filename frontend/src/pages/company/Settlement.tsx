@@ -23,6 +23,7 @@ import {
 } from "../../components/ui";
 import { fmt } from "../../utils";
 import { useAuth } from "@/context/AuthContext";
+import { Link } from "react-router-dom";
 
 const LOW_BALANCE_THRESHOLD = Number(50);
 
@@ -170,6 +171,13 @@ export default function Settlement() {
                               Confirm Receipt
                             </Button>
                           )}
+                        {i.status === "CONFIRMED" && (
+                          <Link to={`/cycles/${i.cycleId}`}>
+                            <Button size="sm" variant="secondary">
+                              View
+                            </Button>
+                          </Link>
+                        )}
                       </Td>
                     </Tr>
                   );

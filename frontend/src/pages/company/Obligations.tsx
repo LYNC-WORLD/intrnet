@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
@@ -41,7 +41,7 @@ const CURRENCIES = [
 ];
 const STATUSES = [
   { value: "", label: "All statuses" },
-  ...["PENDING", "ACCEPTED", "REJECTED", "NETTED"].map((s) => ({
+  ...["PENDING", "ACCEPTED", "NETTED"].map((s) => ({
     value: s,
     label: s,
   })),
@@ -57,7 +57,7 @@ export default function Obligations() {
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
-  const limit = 20;
+  const limit = 10;
 
   const queryParams: Record<string, string | number | undefined> = {
     page,
@@ -133,6 +133,10 @@ export default function Obligations() {
     a.download = "obligations.csv";
     a.click();
   };
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab, currency, status, debouncedSearch]);
 
   return (
     <div className="space-y-6">
