@@ -15,10 +15,9 @@ import {
   recordSettlementTransfer,
   releaseReservedBalance,
   reserveBalance,
-  creditSettlementReceiver,
   resolveSettlementBookkeepingCid,
 } from "./balanceService";
-import { getTokenHoldingsTotal, listTokenHoldings } from "../settlementToken/holdingsService";
+import { getTokenHoldingsTotal, getTokenHoldingsTotalsByParty, listTokenHoldings } from "../settlementToken/holdingsService";
 import { executeTokenTransfer } from "../settlementToken/transferService";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import {
@@ -107,7 +106,6 @@ export async function ensureSettlementFinalized(
     receiverPartyId: instruction.receiver,
     amount: instruction.amount,
     instructionCid: bookkeepingCid,
-    creditReceiver: false,
     createdBy,
   });
   return true;
@@ -158,23 +156,19 @@ export async function listSettlementInstructions(
 }
 
 export async function getSettlementBalance(
-  role: string,
+  _role: string,
   partyId: string,
 ): Promise<SettlementBalanceView> {
   const balance = await getOrCreatePartyBalance(partyId, 0);
   let holdingsTotal: number | null = null;
 
-  const custodyParty = await getOperatorPartyId();
-  if (partyId === custodyParty) {
-    try {
-      holdingsTotal = await getTokenHoldingsTotal(partyId);
-    } catch (err) {
-      console.warn(
-        `Failed to fetch holdings total for ${partyId}:`,
-        err instanceof Error ? err.message : err,
-      );
-      holdingsTotal = null;
-    }
+  try {
+    holdingsTotal = await getTokenHoldingsTotal(partyId);
+  } catch (err) {
+    console.warn(
+      `Failed to fetch holdings total for ${partyId}:`,
+      err instanceof Error ? err.message : err,
+    );
   }
 
   return {
@@ -188,11 +182,16 @@ export async function getSettlementBalance(
 }
 
 export async function listSettlementBalances(role: string, partyId: string) {
-  if (role === "operator") {
-    return listPartyBalances();
+  if (role !== "operator") {
+    return [await getSettlementBalance(role, partyId)];
   }
-  const balance = await getSettlementBalance(role, partyId);
-  return [balance];
+
+  const balances = await listPartyBalances();
+  const holdingsByParty = await getTokenHoldingsTotalsByParty(balances.map((b) => b.partyId));
+  return balances.map((balance) => ({
+    ...balance,
+    holdingsTotal: holdingsByParty.get(balance.partyId) ?? null,
+  }));
 }
 
 export async function executeSettlement(contractId: string) {
@@ -335,7 +334,6 @@ export async function executeSettlement(contractId: string) {
       receiverPartyId: instruction.receiver,
       amount: instruction.amount,
       instructionCid: bookkeepingCid,
-      creditReceiver: false,
     });
     phase = "finalized";
 
@@ -473,15 +471,7 @@ export async function confirmSettlement(
       paymentReference,
       { payer: instruction.payer, amount: instruction.amount },
     );
-    if (!(await hasLedgerEntry(bookkeepingCid, "CREDIT"))) {
-      await ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
-      await creditSettlementReceiver({
-        receiverPartyId: partyId,
-        amount: instruction.amount,
-        instructionCid: bookkeepingCid,
-        createdBy,
-      });
-    }
+    await ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
     return {
       data: {
         newContractId: activeContractId,
@@ -526,75 +516,66 @@ export async function confirmSettlement(
   try {
     const flags = await getSettlementEntryFlags(bookkeepingCid);
 
-    if (!flags.hasCredit) {
-      const alternateInstructionCids = [contractId, activeContractId].filter(
-        (cid) => cid !== bookkeepingCid,
-      );
+    const alternateInstructionCids = [contractId, activeContractId].filter(
+      (cid) => cid !== bookkeepingCid,
+    );
 
-      const resolvePendingOffer = async (): Promise<PendingIncomingTransfer | null> => {
-        if (paymentReference) {
-          const fromUpdate = await findPendingIncomingTransferByUpdateId(
-            paymentReference,
-            partyId,
-            client,
-          );
-          if (
-            fromUpdate.pending &&
-            fromUpdate.pending.sender === custodyParty &&
-            Math.abs(fromUpdate.pending.amount - instruction.amount) < 0.00000001
-          ) {
-            return fromUpdate.pending;
-          }
-          if (fromUpdate.skipAcsFallback) {
-            return null;
-          }
+    const resolvePendingOffer = async (): Promise<PendingIncomingTransfer | null> => {
+      if (paymentReference) {
+        const fromUpdate = await findPendingIncomingTransferByUpdateId(
+          paymentReference,
+          partyId,
+          client,
+        );
+        if (
+          fromUpdate.pending &&
+          fromUpdate.pending.sender === custodyParty &&
+          Math.abs(fromUpdate.pending.amount - instruction.amount) < 0.00000001
+        ) {
+          return fromUpdate.pending;
         }
-
-        const pending = await listPendingIncomingTransfers(partyId, client);
-        return findSettlementPendingTransfer(pending, {
-          instructionCid: bookkeepingCid,
-          alternateInstructionCids,
-          senderPartyId: custodyParty,
-          amount: instruction.amount,
-        });
-      };
-
-      const finalizePromise = flags.hasDebit
-        ? Promise.resolve(true)
-        : ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
-
-      const [match, finalized] = await Promise.all([resolvePendingOffer(), finalizePromise]);
-
-      if (match) {
-        try {
-          transferAccepted = await acceptIncomingTransfer(match, client, {
-            skipAttribution: true,
-          });
-        } catch (acceptErr) {
-          if (!flags.hasPayout && !flags.hasDebit && !flags.hasTransfer && !finalized) {
-            throw acceptErr;
-          }
+        if (fromUpdate.skipAcsFallback) {
+          return null;
         }
-      } else if (!flags.hasPayout && !flags.hasDebit && !flags.hasTransfer) {
-        return {
-          error:
-            `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
-          status: 409 as const,
-        };
-      } else if (!finalized && !flags.hasDebit) {
-        return {
-          error:
-            "Settlement is EXECUTED on-chain but app balances were not finalized. Ask the operator to run sync or retry execute.",
-          status: 409 as const,
-        };
       }
 
-      await creditSettlementReceiver({
-        receiverPartyId: partyId,
-        amount: instruction.amount,
+      const pending = await listPendingIncomingTransfers(partyId, client);
+      return findSettlementPendingTransfer(pending, {
         instructionCid: bookkeepingCid,
-        createdBy,
+        alternateInstructionCids,
+        senderPartyId: custodyParty,
+        amount: instruction.amount,
       });
+    };
+
+    const finalizePromise = flags.hasDebit
+      ? Promise.resolve(true)
+      : ensureSettlementFinalized(bookkeepingCid, paymentReference, createdBy);
+
+    const [match, finalized] = await Promise.all([resolvePendingOffer(), finalizePromise]);
+
+    if (match) {
+      try {
+        transferAccepted = await acceptIncomingTransfer(match, client, {
+          skipAttribution: true,
+        });
+      } catch (acceptErr) {
+        if (!flags.hasPayout && !flags.hasDebit && !flags.hasTransfer && !finalized) {
+          throw acceptErr;
+        }
+      }
+    } else if (!flags.hasPayout && !flags.hasDebit && !flags.hasTransfer) {
+      return {
+        error:
+          `No pending ${getSettlementCurrency()} transfer found for this settlement. The transfer may have expired — ask the operator to re-execute.`,
+        status: 409 as const,
+      };
+    } else if (!finalized && !flags.hasDebit) {
+      return {
+        error:
+          "Settlement is EXECUTED on-chain but app balances were not finalized. Ask the operator to run sync or retry execute.",
+        status: 409 as const,
+      };
     }
 
     const result = await client.exercise({

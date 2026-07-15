@@ -894,7 +894,7 @@ export const openApiSpec = {
         security: [{ bearerAuth: [] }],
         responses: {
           "200": {
-            description: "Party balance with optional Canton Holdings total",
+            description: "Party bookkeeping balance plus on-chain holdingsTotal",
             content: json(routeResponseSchemas.partyBalance),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -908,7 +908,8 @@ export const openApiSpec = {
         security: [{ bearerAuth: [] }],
         responses: {
           "200": {
-            description: "Balances visible to the user (operator sees all)",
+            description:
+              "Balances visible to the user (operator sees all parties with on-chain holdingsTotal)",
             content: json(routeResponseSchemas.partyBalanceList),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },

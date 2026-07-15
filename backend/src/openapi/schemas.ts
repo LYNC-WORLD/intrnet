@@ -446,7 +446,12 @@ export const openApiComponents = {
         available: { type: "number" },
         reserved: { type: "number" },
         total: { type: "number" },
-        holdingsTotal: { type: "number", nullable: true },
+        holdingsTotal: {
+          type: "number",
+          nullable: true,
+          description:
+            "On-chain CIP-56 Holding total owned by this party (null if ledger query failed)",
+        },
       },
       required: ["partyId", "currency", "available", "reserved", "total"],
     },

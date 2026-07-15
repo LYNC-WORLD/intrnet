@@ -582,33 +582,22 @@ export async function finalizeSettlementBalances(params: {
   amount: number;
   instructionCid: string;
   createdBy?: string;
-  creditReceiver?: boolean;
 }): Promise<{ payer: PartyBalanceView; receiver: PartyBalanceView | null }> {
   assertPositiveAmount(params.amount, "Settlement amount");
 
-  const creditReceiver = params.creditReceiver ?? true;
   const currency = getSettlementCurrency();
 
   return prisma.$transaction(async (tx) => {
     const existingDebit = await tx.balanceLedgerEntry.findUnique({
       where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "DEBIT" } },
     });
-    const existingPayout = creditReceiver
-      ? null
-      : await tx.balanceLedgerEntry.findUnique({
-          where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "PAYOUT" } },
-        });
-    if (existingDebit && (!creditReceiver ? existingPayout : true)) {
+    const existingPayout = await tx.balanceLedgerEntry.findUnique({
+      where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "PAYOUT" } },
+    });
+    if (existingDebit && existingPayout) {
       const payerBalance = await tx.partyBalance.findUnique({ where: { partyId: params.payerPartyId } });
       if (!payerBalance) throw new Error("Payer balance not found");
-      let receiverView: PartyBalanceView | null = null;
-      if (creditReceiver) {
-        const receiverBalance = await tx.partyBalance.findUnique({
-          where: { partyId: params.receiverPartyId },
-        });
-        receiverView = receiverBalance ? toBalanceView(receiverBalance) : null;
-      }
-      return { payer: toBalanceView(payerBalance), receiver: receiverView };
+      return { payer: toBalanceView(payerBalance), receiver: null };
     }
 
     const payerBalance = await tx.partyBalance.findUnique({ where: { partyId: params.payerPartyId } });
@@ -664,44 +653,7 @@ export async function finalizeSettlementBalances(params: {
       });
     }
 
-    let receiverView: PartyBalanceView | null = null;
-    if (creditReceiver) {
-      const existingCredit = await tx.balanceLedgerEntry.findUnique({
-        where: { instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "CREDIT" } },
-      });
-      if (!existingCredit) {
-        const updatedReceiver = await tx.partyBalance.upsert({
-          where: { partyId: params.receiverPartyId },
-          update: { available: { increment: decimalAmount(params.amount) } },
-          create: {
-            partyId: params.receiverPartyId,
-            available: decimalAmount(params.amount),
-            reserved: decimalAmount(0),
-            currency,
-          },
-        });
-
-        await tx.balanceLedgerEntry.create({
-          data: {
-            partyId: params.receiverPartyId,
-            entryType: "CREDIT",
-            amount: decimalAmount(params.amount),
-            currency,
-            referenceType: "SETTLEMENT_RECEIVE",
-            referenceId: params.instructionCid,
-            instructionCid: params.instructionCid,
-            createdBy: params.createdBy,
-          },
-        });
-
-        receiverView = toBalanceView(updatedReceiver);
-      } else {
-        const receiverBalance = await tx.partyBalance.findUnique({
-          where: { partyId: params.receiverPartyId },
-        });
-        receiverView = receiverBalance ? toBalanceView(receiverBalance) : null;
-      }
-    } else if (!existingPayout) {
+    if (!existingPayout) {
       await tx.balanceLedgerEntry.create({
         data: {
           partyId: params.receiverPartyId,
@@ -712,83 +664,16 @@ export async function finalizeSettlementBalances(params: {
           referenceId: params.instructionCid,
           instructionCid: params.instructionCid,
           createdBy: params.createdBy,
-          note: `Real ${currency} transferred from custody to receiver wallet`,
+          note: `On-chain ${currency} payout; in-app balance unchanged for receiver`,
         },
       });
     }
 
     return {
       payer: toBalanceView(updatedPayer),
-      receiver: receiverView,
+      receiver: null,
     };
   });
-}
-
-export async function creditSettlementReceiver(params: {
-  receiverPartyId: string;
-  amount: number;
-  instructionCid: string;
-  createdBy?: string;
-}): Promise<PartyBalanceView | null> {
-  assertPositiveAmount(params.amount, "Settlement amount");
-
-  const currency = getSettlementCurrency();
-
-  try {
-    return await prisma.$transaction(async (tx) => {
-      const existingCredit = await tx.balanceLedgerEntry.findUnique({
-        where: {
-          instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "CREDIT" },
-        },
-      });
-      if (existingCredit) {
-        const balance = await tx.partyBalance.findUnique({ where: { partyId: params.receiverPartyId } });
-        return balance ? toBalanceView(balance) : null;
-      }
-
-      const debit = await tx.balanceLedgerEntry.findUnique({
-        where: {
-          instructionCid_entryType: { instructionCid: params.instructionCid, entryType: "DEBIT" },
-        },
-      });
-      if (!debit) {
-        throw new Error("Settlement must be executed before receiver can confirm");
-      }
-
-      const updatedReceiver = await tx.partyBalance.upsert({
-        where: { partyId: params.receiverPartyId },
-        update: { available: { increment: decimalAmount(params.amount) } },
-        create: {
-          partyId: params.receiverPartyId,
-          available: decimalAmount(params.amount),
-          reserved: decimalAmount(0),
-          currency,
-        },
-      });
-
-      await tx.balanceLedgerEntry.create({
-        data: {
-          partyId: params.receiverPartyId,
-          entryType: "CREDIT",
-          amount: decimalAmount(params.amount),
-          currency,
-          referenceType: "SETTLEMENT_RECEIVE",
-          referenceId: params.instructionCid,
-          instructionCid: params.instructionCid,
-          createdBy: params.createdBy,
-          note: `Receiver accepted on-chain ${currency} and confirmed settlement`,
-        },
-      });
-
-      return toBalanceView(updatedReceiver);
-    });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      const balance = await prisma.partyBalance.findUnique({ where: { partyId: params.receiverPartyId } });
-      return balance ? toBalanceView(balance) : null;
-    }
-    throw err;
-  }
 }
 
 export async function releaseReservedBalance(params: {

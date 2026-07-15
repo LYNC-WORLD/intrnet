@@ -92,6 +92,26 @@ export async function getTokenHoldingsTotal(partyId: string): Promise<number> {
   return holdings.reduce((sum, holding) => sum + holding.amount, 0);
 }
 
+export async function getTokenHoldingsTotalsByParty(
+  partyIds: string[],
+): Promise<Map<string, number | null>> {
+  const unique = [...new Set(partyIds.filter(Boolean))];
+  const entries = await Promise.all(
+    unique.map(async (partyId) => {
+      try {
+        return [partyId, await getTokenHoldingsTotal(partyId)] as const;
+      } catch (err) {
+        console.warn(
+          `Failed to fetch holdings total for ${partyId}:`,
+          err instanceof Error ? err.message : err,
+        );
+        return [partyId, null] as const;
+      }
+    }),
+  );
+  return new Map(entries);
+}
+
 function selectHoldingsGreedy(
   holdings: TokenHolding[],
   amount: number,
