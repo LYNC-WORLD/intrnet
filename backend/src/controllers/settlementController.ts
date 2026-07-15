@@ -16,14 +16,18 @@ export const listInstructions = asyncHandler(async (req: Request, res: Response)
 });
 
 export const listBalances = asyncHandler(async (req: Request, res: Response) => {
-  const { role, partyId } = req.user;
-  const balances = await settlementService.listSettlementBalances(role, partyId);
+  const { role, partyId, token } = req.user;
+  const balances = await settlementService.listSettlementBalances(role, partyId, {
+    ledgerToken: token,
+  });
   return res.json({ success: true, data: balances });
 });
 
 export const getBalance = asyncHandler(async (req: Request, res: Response) => {
-  const { role, partyId } = req.user;
-  const balance = await settlementService.getSettlementBalance(role, partyId);
+  const { role, partyId, token } = req.user;
+  const balance = await settlementService.getSettlementBalance(role, partyId, {
+    ledgerToken: token,
+  });
   return res.json({ success: true, data: balance });
 });
 

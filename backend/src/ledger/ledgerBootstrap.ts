@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { operatorAdminClient, partyActReadRights } from "./client";
+import { operatorAdminClient, partyActReadRights, partyReadRights } from "./client";
 import { getOperatorPartyId } from "./operatorParty";
 import { getOperatorLedgerToken } from "./tokenProvider";
 
@@ -14,6 +14,12 @@ export async function getLedgerAdminUserId(): Promise<string> {
   }
 
   throw new Error("LEDGER_API_ADMIN_USER is not set and OAuth token has no sub claim");
+}
+
+export async function grantOperatorReadAsParty(partyId: string): Promise<void> {
+  const adminUserId = await getLedgerAdminUserId();
+  const client = await operatorAdminClient();
+  await client.grantRights(adminUserId, partyReadRights(partyId));
 }
 
 export async function bootstrapLedgerRights(): Promise<void> {

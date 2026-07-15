@@ -1,3 +1,4 @@
+import { isAxiosError } from "axios";
 import { operatorClient, partyClient } from "../ledger/client";
 import { T } from "../ledger/templateIds";
 import { extractRecreatedContractId } from "../ledger/v2";
@@ -158,17 +159,22 @@ export async function listSettlementInstructions(
 export async function getSettlementBalance(
   _role: string,
   partyId: string,
+  opts: { ledgerToken?: string } = {},
 ): Promise<SettlementBalanceView> {
   const balance = await getOrCreatePartyBalance(partyId, 0);
   let holdingsTotal: number | null = null;
 
   try {
-    holdingsTotal = await getTokenHoldingsTotal(partyId);
+    holdingsTotal = await getTokenHoldingsTotal(partyId, {
+      ledgerToken: opts.ledgerToken,
+    });
   } catch (err) {
-    console.warn(
-      `Failed to fetch holdings total for ${partyId}:`,
-      err instanceof Error ? err.message : err,
-    );
+    if (!(isAxiosError(err) && err.response?.status === 403)) {
+      console.warn(
+        `Failed to fetch holdings total for ${partyId}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   return {
@@ -181,9 +187,13 @@ export async function getSettlementBalance(
   };
 }
 
-export async function listSettlementBalances(role: string, partyId: string) {
+export async function listSettlementBalances(
+  role: string,
+  partyId: string,
+  opts: { ledgerToken?: string } = {},
+) {
   if (role !== "operator") {
-    return [await getSettlementBalance(role, partyId)];
+    return [await getSettlementBalance(role, partyId, opts)];
   }
 
   const balances = await listPartyBalances();

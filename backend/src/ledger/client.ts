@@ -46,6 +46,10 @@ export function partyActReadRights(partyId: string): LedgerRight[] {
   ];
 }
 
+export function partyReadRights(partyId: string): LedgerRight[] {
+  return [{ kind: { CanReadAs: { value: { party: partyId } } } }];
+}
+
 type V2Event = Record<string, unknown>;
 type TokenResolver = () => Promise<string>;
 

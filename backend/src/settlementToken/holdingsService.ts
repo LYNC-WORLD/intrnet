@@ -1,5 +1,7 @@
-import { operatorClient } from "../ledger/client";
+import { isAxiosError } from "axios";
+import { LedgerClient, operatorClient, partyClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
+import { grantOperatorReadAsParty } from "../ledger/ledgerBootstrap";
 import {
   getSettlementCurrency,
   getTokenConfig,
@@ -43,15 +45,18 @@ function isLockedHolding(payload: Record<string, unknown>): boolean {
   return true;
 }
 
-export async function listTokenHoldings(
-  partyId?: string,
-  opts: { includeLocked?: boolean } = {},
+function isForbiddenLedgerError(err: unknown): boolean {
+  return isAxiosError(err) && err.response?.status === 403;
+}
+
+async function listHoldingsWithClient(
+  client: LedgerClient,
+  resolvedOwner: string,
+  opts: { includeLocked?: boolean; filterOwner?: string } = {},
 ): Promise<TokenHolding[]> {
   const { instrumentId } = getTokenConfig();
   const expectedAdmin = await resolveInstrumentAdmin();
   const enforceAdmin = shouldEnforceInstrumentAdmin();
-  const client = await operatorClient();
-  const resolvedOwner = partyId ?? (await getOperatorPartyId());
   const contracts = await client.listInterfaceContracts(HOLDING_INTERFACE_ID, resolvedOwner);
 
   const holdings: TokenHolding[] = [];
@@ -66,7 +71,7 @@ export async function listTokenHoldings(
       (typeof payload.owner === "string" && payload.owner) ||
       (typeof payload.holder === "string" && payload.holder) ||
       resolvedOwner;
-    if (partyId && owner !== partyId) continue;
+    if (opts.filterOwner && owner !== opts.filterOwner) continue;
 
     if (!opts.includeLocked && isLockedHolding(payload)) continue;
 
@@ -87,8 +92,43 @@ export async function listTokenHoldings(
   return holdings;
 }
 
-export async function getTokenHoldingsTotal(partyId: string): Promise<number> {
-  const holdings = await listTokenHoldings(partyId);
+export async function listTokenHoldings(
+  partyId?: string,
+  opts: { includeLocked?: boolean; client?: LedgerClient; ledgerToken?: string } = {},
+): Promise<TokenHolding[]> {
+  const resolvedOwner = partyId ?? (await getOperatorPartyId());
+  const client =
+    opts.client ??
+    (opts.ledgerToken
+      ? partyClient(opts.ledgerToken, resolvedOwner)
+      : await operatorClient());
+
+  try {
+    return await listHoldingsWithClient(client, resolvedOwner, {
+      includeLocked: opts.includeLocked,
+      filterOwner: partyId,
+    });
+  } catch (err) {
+    if (!opts.client && !opts.ledgerToken && partyId && isForbiddenLedgerError(err)) {
+      try {
+        await grantOperatorReadAsParty(partyId);
+        return await listHoldingsWithClient(await operatorClient(), resolvedOwner, {
+          includeLocked: opts.includeLocked,
+          filterOwner: partyId,
+        });
+      } catch (retryErr) {
+        throw retryErr;
+      }
+    }
+    throw err;
+  }
+}
+
+export async function getTokenHoldingsTotal(
+  partyId: string,
+  opts: { client?: LedgerClient; ledgerToken?: string } = {},
+): Promise<number> {
+  const holdings = await listTokenHoldings(partyId, opts);
   return holdings.reduce((sum, holding) => sum + holding.amount, 0);
 }
 
@@ -101,10 +141,12 @@ export async function getTokenHoldingsTotalsByParty(
       try {
         return [partyId, await getTokenHoldingsTotal(partyId)] as const;
       } catch (err) {
-        console.warn(
-          `Failed to fetch holdings total for ${partyId}:`,
-          err instanceof Error ? err.message : err,
-        );
+        if (!isForbiddenLedgerError(err)) {
+          console.warn(
+            `Failed to fetch holdings total for ${partyId}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
         return [partyId, null] as const;
       }
     }),
