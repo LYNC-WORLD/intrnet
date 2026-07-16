@@ -148,4 +148,5 @@ export const settlementApi = {
     api.post(`/api/settlement/instructions/${cid}/execute`, {}),
   confirm: (cid: string) => api.post(`/api/settlement/${cid}/confirm`, {}),
   balance: () => api.get("/api/settlement/balance"),
+  faucet: () => api.post("/api/settlement/faucet", {}),
 };
