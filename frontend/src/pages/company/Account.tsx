@@ -3,8 +3,9 @@ import {
   useSettlementInstructions,
   useFxRates,
   useSettlementBalance,
+  useClaimFaucet,
 } from "../../hooks/queries";
-import { Copy } from "lucide-react";
+import { Copy, Droplet } from "lucide-react";
 import { SettlementInstruction, FxRate } from "../../types";
 import {
   Card,
@@ -16,6 +17,7 @@ import {
   Tr,
   PageLoader,
   EmptyState,
+  Button,
 } from "../../components/ui";
 import { fmt } from "../../utils";
 import toast from "react-hot-toast";
@@ -24,6 +26,7 @@ import { Link } from "react-router-dom";
 export default function Account() {
   const { data: profile, isLoading: loadingMe } = useMe();
   const { data: account, isLoading: loadingBalance } = useSettlementBalance();
+  const faucetMutation = useClaimFaucet();
 
   const { data: historyData, isLoading: loadingHistory } =
     useSettlementInstructions({ status: "CONFIRMED" });
@@ -41,6 +44,37 @@ export default function Account() {
     const isCredit = h.receiver === profile?.partyId;
     return { ...h, isCredit };
   });
+
+  const handleClaimFaucet = () => {
+    faucetMutation.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data.alreadyApplied) {
+          toast.error(
+            "You've already claimed the faucet today. Try again tomorrow.",
+          );
+        } else {
+          toast.success(
+            `Claimed ${fmt.currency(data.amount, data.currency)} to your balance`,
+          );
+        }
+      },
+      onError: (err: unknown) => {
+        const status = (err as { response?: { status?: number } })?.response
+          ?.status;
+        const message = (err as { response?: { data?: { error?: string } } })
+          ?.response?.data?.error;
+        if (status === 409) {
+          toast.error(message ?? "You've already claimed the faucet today.");
+        } else if (status === 403) {
+          toast.error(
+            message ?? "Your account can't claim the faucet right now.",
+          );
+        } else {
+          toast.error(message ?? "Failed to claim faucet. Please try again.");
+        }
+      },
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -68,8 +102,19 @@ export default function Account() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <h2 className="font-semibold text-bone-100">Cash Balance</h2>
+          <CardHeader className="!py-3 !px-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-bone-100">Cash Balance</h2>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleClaimFaucet}
+                loading={faucetMutation.isPending}
+              >
+                <Droplet size={14} />
+                Claim funds
+              </Button>
+            </div>
           </CardHeader>
           <CardBody>
             <p className="text-3xl font-bold text-bone-100">

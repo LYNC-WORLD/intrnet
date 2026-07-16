@@ -206,3 +206,13 @@ export function useConfirmSettlement() {
     },
   });
 }
+
+export function useClaimFaucet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => settlementApi.faucet().then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["balance"] });
+    },
+  });
+}
