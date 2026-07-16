@@ -46,6 +46,10 @@ export const openApiComponents = {
         role: { type: "string", enum: ["operator", "participant"] },
         companyName: { type: "string", nullable: true },
         status: { type: "string", enum: ["PENDING", "ACTIVE", "REJECTED"] },
+        canClaimFaucet: {
+          type: "boolean",
+          description: "True if this party has not yet claimed the faucet for the current UTC day",
+        },
         onboardingState: {
           type: "string",
           nullable: true,
@@ -62,6 +66,7 @@ export const openApiComponents = {
           type: "object",
           properties: {
             oauthSub: { type: "string", nullable: true },
+            canClaimFaucet: { type: "boolean" },
             onboardingRequest: {
               type: "object",
               nullable: true,
@@ -454,6 +459,38 @@ export const openApiComponents = {
         },
       },
       required: ["partyId", "currency", "available", "reserved", "total"],
+    },
+    FaucetClaimResult: {
+      type: "object",
+      properties: {
+        amount: { type: "number" },
+        currency: { type: "string" },
+        alreadyApplied: { type: "boolean" },
+        referenceId: { type: "string" },
+        balance: { $ref: "#/components/schemas/PartyBalance" },
+        canClaimFaucet: { type: "boolean" },
+        transferPreapproved: { type: "boolean" },
+        transferPreapprovalContractId: { type: "string" },
+        transferPreapprovalCreated: { type: "boolean" },
+      },
+      required: [
+        "amount",
+        "currency",
+        "alreadyApplied",
+        "referenceId",
+        "balance",
+        "transferPreapproved",
+      ],
+    },
+    FaucetClaimResponse: {
+      allOf: [
+        { $ref: "#/components/schemas/ApiSuccessEnvelope" },
+        {
+          type: "object",
+          properties: { data: { $ref: "#/components/schemas/FaucetClaimResult" } },
+          required: ["data"],
+        },
+      ],
     },
     FailSettlementRequest: {
       type: "object",

@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import * as settlementService from "../services/settlementService";
+import * as faucetService from "../services/faucetService";
 import { asyncHandler } from "../utils/asyncHandler";
-import { isServiceError, sendServiceError } from "../utils/http";
+import { isServiceError, sendResult, sendServiceError } from "../utils/http";
 
 export const listInstructions = asyncHandler(async (req: Request, res: Response) => {
   const { role, partyId, agreementId: userAgreementId } = req.user;
@@ -29,6 +30,15 @@ export const getBalance = asyncHandler(async (req: Request, res: Response) => {
     ledgerToken: token,
   });
   return res.json({ success: true, data: balance });
+});
+
+export const claimFaucet = asyncHandler(async (req: Request, res: Response) => {
+  const result = await faucetService.claimFaucet({
+    partyId: req.user.partyId,
+    ledgerToken: req.user.token,
+    createdBy: req.user.userId,
+  });
+  return sendResult(res, result);
 });
 
 export const execute = asyncHandler(async (req: Request, res: Response) => {

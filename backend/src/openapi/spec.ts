@@ -916,6 +916,26 @@ export const openApiSpec = {
         },
       },
     },
+    "/api/settlement/faucet": {
+      post: {
+        tags: ["Settlement"],
+        summary: "Claim faucet tUSD into in-app available balance",
+        description:
+          "Credits FAUCET_AMOUNT (default 1000) to the caller's in-app available balance from the " +
+          "pre-funded operator custody pool. One claim per party per UTC calendar day. " +
+          "Also ensures a Utility TransferPreapproval for SETTLEMENT_INSTRUMENT_ID (faucet fails if that fails).",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "Faucet credited",
+            content: json({ $ref: "#/components/schemas/FaucetClaimResponse" }),
+          },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "409": { $ref: "#/components/responses/Conflict" },
+        },
+      },
+    },
     "/api/settlement/{contractId}/execute": {
       post: {
         tags: ["Settlement"],
