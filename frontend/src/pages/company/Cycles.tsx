@@ -28,7 +28,12 @@ export default function Cycles() {
   });
   const { data: positionsData, isLoading: loadingPositions } = usePositions();
 
-  const cycles: NettingCycle[] = cyclesData?.cycles ?? [];
+  const cycles: NettingCycle[] = (cyclesData?.cycles ?? [])
+    .slice()
+    .sort(
+      (a: NettingCycle, b: NettingCycle) =>
+        new Date(b.cutoffTime).getTime() - new Date(a.cutoffTime).getTime(),
+    );
   const total: number = cyclesData?.total ?? cycles.length;
 
   const allPositions: NetPosition[] = Array.isArray(positionsData)
