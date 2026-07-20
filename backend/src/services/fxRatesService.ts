@@ -6,9 +6,15 @@ import { extractRecreatedContractId } from "../ledger/v2";
 import { listFxRates as pqsListFxRates } from "../repositories/pqsLedgerReadRepository";
 import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
 import { refreshFxRates } from "./fxOracle";
+import {
+  mapFxRatesForApi,
+  normalizeFxToCurrencyForApi,
+  normalizeFxToCurrencyForLedger,
+} from "../utils/fxCurrency";
 
 export async function listFxRates(fromCurrency?: string, toCurrency?: string) {
-  return pqsListFxRates(fromCurrency, toCurrency);
+  const rates = await pqsListFxRates(fromCurrency, toCurrency);
+  return mapFxRatesForApi(rates);
 }
 
 export async function createFxRate(params: {
@@ -17,7 +23,8 @@ export async function createFxRate(params: {
   rate: number | string;
   asOf?: string;
 }) {
-  const { fromCurrency, toCurrency, rate, asOf } = params;
+  const { fromCurrency, rate, asOf } = params;
+  const toCurrency = normalizeFxToCurrencyForLedger(params.toCurrency);
   const operatorPartyId = await getOperatorPartyId();
   const client = await operatorClient();
   const created = await client.create({
@@ -43,7 +50,13 @@ export async function createFxRate(params: {
     },
   }).catch(console.error);
 
-  return created;
+  return {
+    ...created,
+    payload: {
+      ...created.payload,
+      toCurrency: normalizeFxToCurrencyForApi(toCurrency),
+    },
+  };
 }
 
 export async function updateFxRate(contractId: string, rate: number | string, asOf?: string) {
@@ -72,7 +85,7 @@ export async function updateFxRate(contractId: string, rate: number | string, as
       data: {
         contractId: newEvent.contractId,
         fromCurrency: p.fromCurrency as string,
-        toCurrency: p.toCurrency as string,
+        toCurrency: normalizeFxToCurrencyForLedger(p.toCurrency as string),
         rate: String(rate),
         asOf: new Date((p.asOf as string) ?? asOf ?? new Date().toISOString()),
       },
@@ -88,22 +101,4 @@ export async function updateFxRate(contractId: string, rate: number | string, as
 
 export async function refreshRates() {
   await refreshFxRates();
-}
-
-export async function getFxRateHistory(
-  fromCurrency?: string,
-  toCurrency?: string,
-  days = 30,
-) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-
-  const where: Record<string, unknown> = { asOf: { gte: since } };
-  if (fromCurrency) where.fromCurrency = fromCurrency;
-  if (toCurrency) where.toCurrency = toCurrency;
-
-  return prisma.fxRateHistory.findMany({
-    where,
-    orderBy: { asOf: "desc" },
-  });
 }

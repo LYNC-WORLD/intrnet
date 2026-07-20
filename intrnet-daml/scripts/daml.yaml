@@ -1,9 +1,9 @@
 name: intrnet-scripts
-version: 0.0.5
+version: 0.0.4
 source: daml
 dependencies:
   - daml-prim
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../contracts/.daml/dist/intrnet-contracts-0.0.5.dar
+  - ../contracts/.daml/dist/intrnet-contracts-tusd-0.0.1.dar

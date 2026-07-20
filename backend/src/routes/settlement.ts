@@ -5,8 +5,11 @@ import { authenticateOAuth, requireActiveUser, requireOperator } from "../middle
 const router = Router();
 
 router.get("/instructions", authenticateOAuth, requireActiveUser, settlementController.listInstructions);
-router.get("/accounts", authenticateOAuth, requireActiveUser, settlementController.listAccounts);
+router.get("/balance", authenticateOAuth, requireActiveUser, settlementController.getBalance);
+router.get("/balances", authenticateOAuth, requireActiveUser, settlementController.listBalances);
+router.post("/faucet", authenticateOAuth, requireActiveUser, settlementController.claimFaucet);
 router.post("/:contractId/execute", authenticateOAuth, requireOperator, settlementController.execute);
+router.post("/:contractId/fail", authenticateOAuth, requireOperator, settlementController.fail);
 router.post("/:contractId/confirm", authenticateOAuth, requireActiveUser, settlementController.confirm);
 
 export default router;

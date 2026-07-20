@@ -141,8 +141,6 @@ testCloseCycleFailsWithExecutedNotConfirmed : Script ()
 testCloseCycleFailsWithExecutedNotConfirmed = do
   parties <- allocateTestParties
   let cycleId = "GATE-CLOSE-EXECUTED-NOT-CONFIRMED"
-  _ <- seedCashAccount parties.operator parties.companyA "USD" 50000.0
-  _ <- seedCashAccount parties.operator parties.companyB "USD" 50000.0
 
   computedCycleCid <- setupCycleWithSingleObligation parties cycleId 1000.0 "USD"
   ackedCids <- acknowledgeAllPositionsForCycle parties cycleId
@@ -152,12 +150,8 @@ testCloseCycleFailsWithExecutedNotConfirmed = do
   let instructionCid =
         expectOne "Expected settlement instruction" settledCycle.settlementInstructionCids
 
-  payerAcctCid <- findCashAccountCid parties.operator parties.companyA "USD"
-  receiverAcctCid <- findCashAccountCid parties.operator parties.companyB "USD"
   executedCid <- submit parties.operator do
-    exerciseCmd instructionCid ExecuteSettlement with
-      payerAcctCid
-      receiverAcctCid
+    exerciseCmd instructionCid AttestPayment with paymentUpdateId = "gate-payment-001"
   Some executed <- queryContractId parties.operator executedCid
   assertMsg "Instruction must be EXECUTED before close attempt" (executed.status == "EXECUTED")
 
@@ -197,8 +191,6 @@ testFullGateFlowComputeToClose : Script ()
 testFullGateFlowComputeToClose = do
   parties <- allocateTestParties
   let cycleId = "GATE-FULL-FLOW"
-  _ <- seedCashAccount parties.operator parties.companyA "USD" 100000.0
-  _ <- seedCashAccount parties.operator parties.companyB "USD" 100000.0
 
   computedCycleCid <- setupCycleWithSingleObligation parties cycleId 2000.0 "USD"
   Some computedCycle <- queryContractId parties.operator computedCycleCid
@@ -213,12 +205,8 @@ testFullGateFlowComputeToClose = do
   let instructionCid =
         expectOne "Expected settlement instruction in full flow" $
           settledCycle.settlementInstructionCids
-  payerAcctCid <- findCashAccountCid parties.operator parties.companyA "USD"
-  receiverAcctCid <- findCashAccountCid parties.operator parties.companyB "USD"
   executedCid <- submit parties.operator do
-    exerciseCmd instructionCid ExecuteSettlement with
-      payerAcctCid
-      receiverAcctCid
+    exerciseCmd instructionCid AttestPayment with paymentUpdateId = "gate-payment-002"
   confirmedCid <- submit parties.companyB do
     exerciseCmd executedCid ConfirmReceipt
 

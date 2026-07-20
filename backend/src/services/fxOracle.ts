@@ -4,13 +4,18 @@ import { operatorClient } from "../ledger/client";
 import { getOperatorPartyId } from "../ledger/operatorParty";
 import { T } from "../ledger/templateIds";
 import { auditLedgerCreate, auditLedgerExercise } from "./ledgerAudit";
+import {
+  FX_ORACLE_TARGET_CURRENCY,
+  isContractUpgradeError,
+  oracleToCurrencyMatchesSettlement,
+} from "../utils/fxCurrency";
 
 const CURRENCIES = (process.env.SUPPORTED_CURRENCIES ?? "EUR,GBP,JPY,CHF,AUD")
   .split(",")
   .map((c) => c.trim())
   .filter(Boolean);
 
-const BASE = process.env.SETTLEMENT_CURRENCY ?? "USD";
+const FX_API_BASE = FX_ORACLE_TARGET_CURRENCY;
 
 type FxApiResponse = {
   result?: string;
@@ -24,13 +29,15 @@ function buildFxApiUrl() {
   const configuredUrl = process.env.FX_API_URL?.trim();
   const apiKey = process.env.FX_API_KEY?.trim();
   if (configuredUrl && configuredUrl.includes("{API_KEY}") && apiKey) {
-    return configuredUrl.replace("{API_KEY}", apiKey).replace("{BASE}", BASE);
+    return configuredUrl
+      .replace("{API_KEY}", apiKey)
+      .replace("{BASE}", FX_API_BASE);
   }
   if (configuredUrl && !configuredUrl.includes("openexchangerates.org")) {
     return configuredUrl;
   }
   if (apiKey) {
-    return `https://v6.exchangerate-api.com/v6/${apiKey}/latest/${BASE}`;
+    return `https://v6.exchangerate-api.com/v6/${apiKey}/latest/${FX_API_BASE}`;
   }
   return configuredUrl!;
 }
@@ -59,12 +66,15 @@ export async function refreshFxRates() {
     const isOpenExchangeRates = url.includes("openexchangerates.org");
     const { data } = await axios.get<FxApiResponse>(url, {
       ...(isOpenExchangeRates
-        ? { params: { app_id: process.env.FX_API_KEY, base: BASE } }
+        ? { params: { app_id: process.env.FX_API_KEY, base: FX_API_BASE } }
         : {}),
     });
 
     if (data.result && data.result !== "success") {
-      throw new Error(`FX API returned result=${data.result}`);
+      const errorType = (data as { "error-type"?: string })["error-type"];
+      throw new Error(
+        `FX API returned result=${data.result}${errorType ? ` (${errorType})` : ""} for base ${FX_API_BASE}`,
+      );
     }
 
     const rates = extractRates(data);
@@ -73,7 +83,16 @@ export async function refreshFxRates() {
     const now = data.time_last_update_utc
       ? new Date(data.time_last_update_utc).toISOString()
       : new Date().toISOString();
-    const existing = await client.query(T.FxRateOracle);
+    const { listFxRates: pqsListFxRates } = await import("../repositories/pqsLedgerReadRepository");
+    const existingRates = await pqsListFxRates(undefined, FX_ORACLE_TARGET_CURRENCY);
+    const existing = existingRates.map((rate) => ({
+      contractId: rate.contractId,
+      payload: {
+        fromCurrency: rate.fromCurrency,
+        toCurrency: rate.toCurrency,
+        rate: String(rate.rate),
+      },
+    }));
 
     for (const currency of CURRENCIES) {
       const rate = rates[currency];
@@ -83,37 +102,63 @@ export async function refreshFxRates() {
       }
 
       const invRate = 1 / rate;
-      const existingContract = existing.find(
-        (c) => c.payload.fromCurrency === currency && c.payload.toCurrency === BASE,
+      const matching = existing.filter(
+        (contract) =>
+          contract.payload.fromCurrency === currency &&
+          oracleToCurrencyMatchesSettlement(
+            contract.payload.toCurrency as string,
+            FX_ORACLE_TARGET_CURRENCY,
+          ),
       );
+      const existingContract =
+        matching.find((contract) => contract.payload.toCurrency === FX_ORACLE_TARGET_CURRENCY) ??
+        matching[0];
 
       if (existingContract) {
-        const result = await client.exercise({
-          templateId: T.FxRateOracle,
-          contractId: existingContract.contractId,
-          choice: "UpdateRate",
-          argument: { newRate: String(invRate.toFixed(8)), newAsOf: now },
-        });
-        await auditLedgerExercise(
-          T.FxRateOracle,
-          "UpdateRate",
-          existingContract.contractId,
-          result.events,
-        );
+        try {
+          const result = await client.exercise({
+            templateId: T.FxRateOracle,
+            contractId: existingContract.contractId,
+            choice: "UpdateRate",
+            argument: { newRate: String(invRate.toFixed(8)), newAsOf: now },
+          });
+          await auditLedgerExercise(
+            T.FxRateOracle,
+            "UpdateRate",
+            existingContract.contractId,
+            result.events,
+          );
+        } catch (updateErr) {
+          if (!isContractUpgradeError(updateErr)) throw updateErr;
+          console.warn(
+            `[FxOracle] ${currency}/${FX_ORACLE_TARGET_CURRENCY} upgrade failed; creating new oracle contract`,
+          );
+          const created = await client.create({
+            templateId: T.FxRateOracle,
+            payload: {
+              operator: operatorPartyId,
+              fromCurrency: currency,
+              toCurrency: FX_ORACLE_TARGET_CURRENCY,
+              rate: String(invRate.toFixed(8)),
+              asOf: now,
+            },
+          });
+          await auditLedgerCreate(T.FxRateOracle, created.contractId, created.payload, operatorPartyId);
+        }
       } else {
         const created = await client.create({
           templateId: T.FxRateOracle,
           payload: {
             operator: operatorPartyId,
             fromCurrency: currency,
-            toCurrency: BASE,
+            toCurrency: FX_ORACLE_TARGET_CURRENCY,
             rate: String(invRate.toFixed(8)),
             asOf: now,
           },
         });
         await auditLedgerCreate(T.FxRateOracle, created.contractId, created.payload, operatorPartyId);
       }
-      console.log(`[FxOracle] updated ${currency}/${BASE} = ${invRate.toFixed(8)}`);
+      console.log(`[FxOracle] updated ${currency}/${FX_ORACLE_TARGET_CURRENCY} = ${invRate.toFixed(8)}`);
     }
   } catch (err) {
     console.error("[FxOracle] failed to update rates:", err);

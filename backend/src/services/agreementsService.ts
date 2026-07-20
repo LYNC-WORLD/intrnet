@@ -88,7 +88,6 @@ export async function resolveAgreementFromInput(input: {
     return { error: "agreementId or agreementContractId is required", status: 400 as const };
   }
 
-  // Fall back to Ledger API when only a contractId is supplied
   const client = await operatorClient();
   const agreement = await client.fetchById(input.agreementContractId);
   if (!agreement) return { error: "NettingAgreement not found on ledger", status: 404 as const };

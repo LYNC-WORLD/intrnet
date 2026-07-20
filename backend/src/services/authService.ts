@@ -4,6 +4,7 @@ import {
   placeholderEmailFromSub,
   verifyOAuthToken,
 } from "../auth/oauth";
+import { canClaimFaucet } from "./faucetService";
 
 async function linkOperatorByOauthSub(
   sub: string,
@@ -138,6 +139,7 @@ export async function getMe(userId: string) {
       status: user.status,
       oauthSub: user.oauthSub,
       onboardingRequest: user.onboardingRequest,
+      canClaimFaucet: await canClaimFaucet(user.partyId),
     },
   };
 }

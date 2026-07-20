@@ -55,20 +55,24 @@ async function loadSettlementInstructionCids(contractIdOrCycleId: string) {
   return { data: instructions.map((i) => i.contractId), cycle };
 }
 
-export async function listCycles(
-  role: string,
-  userAgreementId?: string | null,
-  agreementId?: string,
-) {
-  return pqsListCycles({ role, userAgreementId, agreementId });
+export async function listCycles(params: {
+  role: string;
+  userAgreementId?: string | null;
+  agreementId?: string;
+  page: number;
+  limit: number;
+}) {
+  return pqsListCycles(params);
 }
 
 export async function getCycle(contractIdOrCycleId: string) {
   const cycle = await resolveCycle(contractIdOrCycleId);
   if (!cycle) return { error: "Cycle not found", status: 404 as const };
 
-  const positions = await getActivePositionsForCycle(cycle.cycleId);
-  const instructions = await getActiveInstructionsForCycle(cycle.cycleId);
+  const [positions, instructions] = await Promise.all([
+    getActivePositionsForCycle(cycle.cycleId),
+    getActiveInstructionsForCycle(cycle.cycleId),
+  ]);
 
   const gateSummary = computeCycleGateSummary({
     status: cycle.status,

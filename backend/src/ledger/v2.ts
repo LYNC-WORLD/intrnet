@@ -7,17 +7,6 @@ export interface TokenClaims {
   readAs?: string[];
 }
 
-export interface LegacyCreatedEvent {
-  contractId: string;
-  templateId: string;
-  payload: Record<string, unknown>;
-}
-
-export interface LegacyArchivedEvent {
-  contractId: string;
-  templateId: string;
-}
-
 export interface CreatedEventRef {
   contractId: string;
   templateId: string;
@@ -42,15 +31,15 @@ export function matchesTemplate(templateId: string, expected: string): boolean {
   return templateSuffix(templateId) === expected || templateId.endsWith(`:${expected}`);
 }
 
+export function packageIdFromTemplateId(templateId: string): string | null {
+  const parts = templateId.split(":");
+  if (parts.length >= 3) return parts[0] ?? null;
+  return null;
+}
+
 export function qualifyTemplateId(templateId: string, packageId: string): string {
   if (templateId.split(":").length >= 3) return templateId;
   return `${packageId}:${templateId}`;
-}
-
-export function resolvePartyHint(hint: string, knownParties: string[]): string {
-  if (hint.includes("::")) return hint;
-  const match = knownParties.find((p) => p === hint || p.startsWith(`${hint}::`));
-  return match ?? hint;
 }
 
 export function wildcardEventFormat(parties: string[]) {
@@ -63,20 +52,24 @@ export function wildcardEventFormat(parties: string[]) {
   return { filtersByParty };
 }
 
-export function templateEventFormat(parties: string[], templateIds: string[], packageId: string) {
-  const cumulative = templateIds.map((templateId) => ({
-    identifierFilter: {
-      TemplateFilter: {
-        value: {
-          templateId: qualifyTemplateId(templateId, packageId),
-          includeCreatedEventBlob: false,
-        },
-      },
-    },
-  }));
+export function interfaceEventFormat(parties: string[], interfaceId: string) {
   const filtersByParty: Record<string, unknown> = {};
   for (const party of parties) {
-    filtersByParty[party] = { cumulative };
+    filtersByParty[party] = {
+      cumulative: [
+        {
+          identifierFilter: {
+            InterfaceFilter: {
+              value: {
+                interfaceId,
+                includeInterfaceView: true,
+                includeCreatedEventBlob: true,
+              },
+            },
+          },
+        },
+      ],
+    };
   }
   return { filtersByParty };
 }
@@ -165,5 +158,11 @@ export function findCreatedEvent(
       return event.created;
     }
   }
+  return null;
+}
+
+export function parseLedgerOffset(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value.trim());
   return null;
 }

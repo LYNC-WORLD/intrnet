@@ -19,7 +19,6 @@ export const openApiComponents = {
       required: ["error"],
     },
 
-    // --- Envelopes ---
     ApiSuccessEnvelope: {
       type: "object",
       properties: { success: { type: "boolean", example: true } },
@@ -31,7 +30,6 @@ export const openApiComponents = {
       required: ["ok"],
     },
 
-    // --- Auth & users ---
     UserProfile: {
       type: "object",
       description: "App user profile returned after login or from /me",
@@ -48,6 +46,10 @@ export const openApiComponents = {
         role: { type: "string", enum: ["operator", "participant"] },
         companyName: { type: "string", nullable: true },
         status: { type: "string", enum: ["PENDING", "ACTIVE", "REJECTED"] },
+        canClaimFaucet: {
+          type: "boolean",
+          description: "True if this party has not yet claimed the faucet for the current UTC day",
+        },
         onboardingState: {
           type: "string",
           nullable: true,
@@ -64,6 +66,7 @@ export const openApiComponents = {
           type: "object",
           properties: {
             oauthSub: { type: "string", nullable: true },
+            canClaimFaucet: { type: "boolean" },
             onboardingRequest: {
               type: "object",
               nullable: true,
@@ -106,7 +109,6 @@ export const openApiComponents = {
       ],
     },
 
-    // --- Onboarding ---
     OnboardingRequest: {
       type: "object",
       properties: {
@@ -205,7 +207,6 @@ export const openApiComponents = {
       required: ["email", "status"],
     },
 
-    // --- Ledger primitives ---
     LedgerContractCreate: {
       type: "object",
       description: "Result of a ledger contract create",
@@ -235,7 +236,6 @@ export const openApiComponents = {
       required: ["newContractId"],
     },
 
-    // --- Agreements ---
     Agreement: {
       type: "object",
       properties: {
@@ -263,7 +263,6 @@ export const openApiComponents = {
       required: ["contractId"],
     },
 
-    // --- FX ---
     FxRate: {
       type: "object",
       properties: {
@@ -276,7 +275,6 @@ export const openApiComponents = {
       required: ["contractId", "fromCurrency", "toCurrency", "rate", "asOf"],
     },
 
-    // --- Obligations ---
     Obligation: {
       type: "object",
       properties: {
@@ -314,8 +312,25 @@ export const openApiComponents = {
       },
       required: ["obligations", "total", "page"],
     },
+    CycleListData: {
+      type: "object",
+      properties: {
+        cycles: { type: "array", items: { $ref: "#/components/schemas/NettingCycle" } },
+        total: { type: "integer" },
+        page: { type: "integer" },
+      },
+      required: ["cycles", "total", "page"],
+    },
+    CompanyListData: {
+      type: "object",
+      properties: {
+        companies: { type: "array", items: { $ref: "#/components/schemas/CompanySummary" } },
+        total: { type: "integer" },
+        page: { type: "integer" },
+      },
+      required: ["companies", "total", "page"],
+    },
 
-    // --- Cycles ---
     InstructionCounts: {
       type: "object",
       properties: {
@@ -393,7 +408,6 @@ export const openApiComponents = {
       ],
     },
 
-    // --- Positions & settlement ---
     NetPosition: {
       type: "object",
       properties: {
@@ -422,24 +436,69 @@ export const openApiComponents = {
         amount: { type: "number" },
         currency: { type: "string" },
         cycleId: { type: "string" },
-        status: { type: "string", enum: ["PENDING", "EXECUTED", "CONFIRMED"] },
+        status: { type: "string", enum: ["PENDING", "EXECUTED", "CONFIRMED", "FAILED"] },
+        paymentReference: { type: "string", nullable: true },
         failureReason: { type: "string", nullable: true },
         createdAt: dateTime,
       },
       required: ["contractId", "payer", "receiver", "amount", "currency", "cycleId", "status", "createdAt"],
     },
-    CashAccount: {
+    PartyBalance: {
       type: "object",
       properties: {
-        contractId,
-        owner: partyId,
+        partyId,
         currency: { type: "string" },
-        balance: { type: "number" },
+        available: { type: "number" },
+        reserved: { type: "number" },
+        total: { type: "number" },
+        holdingsTotal: {
+          type: "number",
+          nullable: true,
+          description:
+            "On-chain CIP-56 Holding total owned by this party (null if ledger query failed)",
+        },
       },
-      required: ["contractId", "owner", "currency", "balance"],
+      required: ["partyId", "currency", "available", "reserved", "total"],
+    },
+    FaucetClaimResult: {
+      type: "object",
+      properties: {
+        amount: { type: "number" },
+        currency: { type: "string" },
+        alreadyApplied: { type: "boolean" },
+        referenceId: { type: "string" },
+        balance: { $ref: "#/components/schemas/PartyBalance" },
+        canClaimFaucet: { type: "boolean" },
+        transferPreapproved: { type: "boolean" },
+        transferPreapprovalContractId: { type: "string" },
+        transferPreapprovalCreated: { type: "boolean" },
+      },
+      required: [
+        "amount",
+        "currency",
+        "alreadyApplied",
+        "referenceId",
+        "balance",
+        "transferPreapproved",
+      ],
+    },
+    FaucetClaimResponse: {
+      allOf: [
+        { $ref: "#/components/schemas/ApiSuccessEnvelope" },
+        {
+          type: "object",
+          properties: { data: { $ref: "#/components/schemas/FaucetClaimResult" } },
+          required: ["data"],
+        },
+      ],
+    },
+    FailSettlementRequest: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Optional human-readable failure reason" },
+      },
     },
 
-    // --- Admin / infra ---
     PqsHealth: {
       type: "object",
       properties: {
@@ -447,14 +506,13 @@ export const openApiComponents = {
         agreementCount: { type: "integer" },
         cycleCount: { type: "integer" },
         obligationCount: { type: "integer" },
-        cashAccountCount: { type: "integer" },
+        settlementInstructionCount: { type: "integer" },
         packageId: { type: "string", description: "Present when connected (optional on error)" },
         error: { type: "string", description: "Present when connected is false (optional on success)" },
       },
-      required: ["connected", "agreementCount", "cycleCount", "obligationCount", "cashAccountCount"],
+      required: ["connected", "agreementCount", "cycleCount", "obligationCount", "settlementInstructionCount"],
     },
 
-    // --- Requests ---
     OAuthLoginRequest: {
       type: "object",
       properties: { token: { type: "string", description: "OAuth access token from Auth0" } },
@@ -479,7 +537,6 @@ export const openApiComponents = {
         partyHint: { type: "string", description: "Optional; defaults to request partyHint or company slug" },
         agreementId: { type: "string", description: "Optional if request user already has agreementId" },
         agreementContractId: { type: "string", description: "Optional alternative to agreementId" },
-        initialBalance: { type: "string", description: "Optional cash account balance (defaults from env)" },
       },
     },
     RejectOnboardingRequest: {
@@ -487,11 +544,31 @@ export const openApiComponents = {
       properties: { reason: { type: "string" } },
       required: ["reason"],
     },
+    ManualBalanceCreditRequest: {
+      type: "object",
+      description:
+        "Operator manual tUSD balance credit when automatic deposit sync cannot attribute a custody holding. " +
+        "Prefer holdingContractId (idempotent with deposit sync); otherwise supply a unique referenceId.",
+      properties: {
+        partyId: { ...partyId, description: "ACTIVE participant party to credit" },
+        amount: { type: "number", exclusiveMinimum: 0 },
+        holdingContractId: {
+          type: "string",
+          description: "Optional custody Holding contract id; credits with DEPOSIT reference (sync-safe)",
+        },
+        referenceId: {
+          type: "string",
+          description: "Required when holdingContractId is omitted; idempotency key for MANUAL_CREDIT",
+        },
+        note: { type: "string", description: "Optional audit note" },
+      },
+      required: ["partyId", "amount"],
+    },
     CreateAgreementRequest: {
       type: "object",
       properties: {
         agreementId: { type: "string" },
-        settlementCurrency: { type: "string", default: "USD", description: "Optional; defaults to USD" },
+        settlementCurrency: { type: "string", default: "tUSD", description: "Optional; defaults to SETTLEMENT_CURRENCY env" },
         agreementDate: { ...dateOnly, description: "Optional; defaults to today" },
       },
       required: ["agreementId"],
@@ -573,17 +650,6 @@ export const openApiComponents = {
         },
       },
     },
-    FundAccountRequest: {
-      type: "object",
-      properties: {
-        owner: { ...partyId, description: "Party that owns the cash account" },
-        currency: { type: "string" },
-        amount: { type: "number", minimum: 0, exclusiveMinimum: true },
-      },
-      required: ["owner", "currency", "amount"],
-    },
-
-    // --- Typed success responses (success + data) ---
     OnboardingSubmitResponse: {
       allOf: [
         { $ref: "#/components/schemas/ApiSuccessEnvelope" },
@@ -651,9 +717,17 @@ export const openApiComponents = {
         { $ref: "#/components/schemas/ApiSuccessEnvelope" },
         {
           type: "object",
-          properties: {
-            data: { type: "array", items: { $ref: "#/components/schemas/NettingCycle" } },
-          },
+          properties: { data: { $ref: "#/components/schemas/CycleListData" } },
+          required: ["data"],
+        },
+      ],
+    },
+    CompanyListResponse: {
+      allOf: [
+        { $ref: "#/components/schemas/ApiSuccessEnvelope" },
+        {
+          type: "object",
+          properties: { data: { $ref: "#/components/schemas/CompanyListData" } },
           required: ["data"],
         },
       ],
@@ -748,7 +822,7 @@ function itemResponse(itemRef: string) {
 }
 
 export const routeResponseSchemas = {
-  companyList: listResponse("#/components/schemas/CompanySummary"),
+  companyList: { $ref: "#/components/schemas/CompanyListResponse" },
   partyList: listResponse("#/components/schemas/LedgerParty"),
   onboardingRequestList: listResponse("#/components/schemas/OnboardingRequestWithUser"),
   onboardingRequestDetail: itemResponse("#/components/schemas/OnboardingRequestWithUser"),
@@ -758,6 +832,7 @@ export const routeResponseSchemas = {
   fxRateList: listResponse("#/components/schemas/FxRate"),
   positionList: listResponse("#/components/schemas/NetPosition"),
   settlementInstructionList: listResponse("#/components/schemas/SettlementInstruction"),
-  cashAccountList: listResponse("#/components/schemas/CashAccount"),
+  partyBalance: itemResponse("#/components/schemas/PartyBalance"),
+  partyBalanceList: listResponse("#/components/schemas/PartyBalance"),
   newContractId: itemResponse("#/components/schemas/NewContractIdResult"),
 } as const;

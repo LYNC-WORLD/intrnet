@@ -4,36 +4,48 @@ import { extractRecreatedContractId, encodeTuple2, type ExerciseEvents } from ".
 import {
   getObligation,
   listAcceptedObligations,
+  listFxRates as pqsListFxRates,
 } from "../repositories/pqsLedgerReadRepository";
 import { auditLedgerExercise } from "./ledgerAudit";
+import {
+  dedupeFxRatesByFromCurrency,
+  FX_ORACLE_TARGET_CURRENCY,
+  oracleToCurrencyMatchesSettlement,
+} from "../utils/fxCurrency";
 
 async function markObligationsAsNetted(obligationCids: string[]) {
   if (obligationCids.length === 0) return;
 
   const client = await operatorClient();
-  for (const obCid of obligationCids) {
-    const obligation = await getObligation(obCid);
-    if (!obligation) {
-      throw new Error(`Obligation not found while marking as netted: ${obCid}`);
-    }
-    if (obligation.status === "NETTED") continue;
-    if (obligation.status !== "ACCEPTED") {
-      throw new Error(
-        `Obligation ${obligation.invoiceRef} is ${obligation.status}; expected ACCEPTED before MarkAsNetted`,
-      );
-    }
+  const CONCURRENCY = 5;
+  for (let i = 0; i < obligationCids.length; i += CONCURRENCY) {
+    const chunk = obligationCids.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      chunk.map(async (obCid) => {
+        const obligation = await getObligation(obCid);
+        if (!obligation) {
+          throw new Error(`Obligation not found while marking as netted: ${obCid}`);
+        }
+        if (obligation.status === "NETTED") return;
+        if (obligation.status !== "ACCEPTED") {
+          throw new Error(
+            `Obligation ${obligation.invoiceRef} is ${obligation.status}; expected ACCEPTED before MarkAsNetted`,
+          );
+        }
 
-    const markResult = await client.exercise({
-      templateId: T.Obligation,
-      contractId: obligation.contractId,
-      choice: "MarkAsNetted",
-      argument: {},
-    });
-    await auditLedgerExercise(
-      T.Obligation,
-      "MarkAsNetted",
-      obligation.contractId,
-      markResult.events,
+        const markResult = await client.exercise({
+          templateId: T.Obligation,
+          contractId: obligation.contractId,
+          choice: "MarkAsNetted",
+          argument: {},
+        });
+        await auditLedgerExercise(
+          T.Obligation,
+          "MarkAsNetted",
+          obligation.contractId,
+          markResult.events,
+        );
+      }),
     );
   }
 }
@@ -77,10 +89,19 @@ export async function computeNetPositions(cycleCid: string, ackDeadline: string)
   if (!cycleContract) throw new Error("NettingCycle contract not found");
 
   const settlementCurrency = cycleContract.payload.settlementCurrency as string;
-  const fxOracles = await client.query(T.FxRateOracle);
-  const fxRateCids = fxOracles
-    .filter((o) => o.payload.toCurrency === settlementCurrency)
-    .map((o) => encodeTuple2(o.payload.fromCurrency as string, o.contractId));
+  const fxRates = await pqsListFxRates();
+  const eligible = fxRates.filter((rate) =>
+    oracleToCurrencyMatchesSettlement(rate.toCurrency, settlementCurrency),
+  );
+  const selected = dedupeFxRatesByFromCurrency(eligible);
+  if (selected.length === 0) {
+    throw new Error(
+      `No FX rate oracles found on the current package for settlement currency ${settlementCurrency}. ` +
+        `Run POST /api/fx-rates/refresh to create ${FX_ORACLE_TARGET_CURRENCY} oracles before computing netting.`,
+    );
+  }
+
+  const fxRateCids = selected.map((rate) => encodeTuple2(rate.fromCurrency, rate.contractId));
 
   const result = await client.exercise({
     templateId: T.NettingCycle,

@@ -4,10 +4,13 @@ import {
   extractPackageId,
   matchesTemplate,
   newCommandId,
+  packageIdFromTemplateId,
   qualifyTemplateId,
   templateSuffix,
   toLegacyEvents,
+  interfaceEventFormat,
   wildcardEventFormat,
+  parseLedgerOffset,
 } from "./v2";
 import { withProxyHostHeader } from "../http/proxyHeaders";
 import { clearOperatorLedgerTokenCache, getOperatorLedgerToken } from "./tokenProvider";
@@ -41,6 +44,10 @@ export function partyActReadRights(partyId: string): LedgerRight[] {
     { kind: { CanActAs: { value: { party: partyId } } } },
     { kind: { CanReadAs: { value: { party: partyId } } } },
   ];
+}
+
+export function partyReadRights(partyId: string): LedgerRight[] {
+  return [{ kind: { CanReadAs: { value: { party: partyId } } } }];
 }
 
 type V2Event = Record<string, unknown>;
@@ -222,18 +229,22 @@ export class LedgerClient {
     return contracts;
   }
 
-  private async submitAndWait(commands: Array<Record<string, unknown>>) {
+  private async submitAndWait(
+    commands: Array<Record<string, unknown>>,
+    disclosedContracts?: Array<Record<string, unknown>>,
+  ) {
     const actAs = await this.resolveParties();
     if (!actAs.length) throw new Error("No actAs parties available for ledger command");
 
     const readAs = await this.resolveReadParties(actAs);
-    const body = {
+    const body: Record<string, unknown> = {
       commands: {
         commandId: newCommandId(),
         userId: await this.commandUserId(),
         actAs,
         readAs,
         commands,
+        ...(disclosedContracts && disclosedContracts.length ? { disclosedContracts } : {}),
       },
     };
 
@@ -241,6 +252,7 @@ export class LedgerClient {
       this.http.post("/v2/commands/submit-and-wait-for-transaction", body),
     );
     return res.data.transaction as {
+      updateId?: string;
       offset: number;
       events: V2Event[];
     };
@@ -291,13 +303,207 @@ export class LedgerClient {
     };
   }
 
-  async query(templateId: string, filter?: QueryFilter) {
+  async exerciseWithDisclosed(cmd: ExerciseCmd & {
+    disclosedContracts?: Array<Record<string, unknown>>;
+  }) {
+    const transaction = await this.submitAndWait(
+      [
+        {
+          ExerciseCommand: {
+            templateId: cmd.templateId,
+            contractId: cmd.contractId,
+            choice: cmd.choice,
+            choiceArgument: cmd.argument,
+          },
+        },
+      ],
+      cmd.disclosedContracts,
+    );
+
+    const exercised = transaction.events.find((event) => event.ExercisedEvent)?.ExercisedEvent as
+      | Record<string, unknown>
+      | undefined;
+
+    return {
+      updateId: transaction.updateId ?? null,
+      exerciseResult: exercised?.exerciseResult ?? null,
+      events: toLegacyEvents(transaction.events),
+      rawEvents: transaction.events,
+    };
+  }
+
+  private parseUpdateResponseEvents(data: unknown): Array<Record<string, unknown>> {
+    const events: Array<Record<string, unknown>> = [];
+    const appendFromUpdate = (update: Record<string, unknown> | undefined) => {
+      if (!update) return;
+
+      const transaction = update.Transaction as
+        | { value?: { events?: Array<Record<string, unknown>> }; events?: Array<Record<string, unknown>> }
+        | undefined;
+      const txValue = transaction?.value;
+      const txEvents = txValue?.events ?? transaction?.events;
+      if (Array.isArray(txEvents)) events.push(...txEvents);
+    };
+
+    if (Array.isArray(data)) {
+      for (const item of data as Array<Record<string, unknown>>) {
+        appendFromUpdate(item.update as Record<string, unknown> | undefined);
+      }
+      return events;
+    }
+
+    const record = data as Record<string, unknown>;
+    appendFromUpdate(record.update as Record<string, unknown> | undefined);
+    return events;
+  }
+
+  async fetchTransactionEventsAtOffset(
+    offset: number,
+    opts: { transactionShape?: string } = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const shape = opts.transactionShape ?? "TRANSACTION_SHAPE_ACS_DELTA";
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/updates/update-by-offset", {
+        offset,
+        updateFormat: {
+          includeTransactions: {
+            eventFormat: wildcardEventFormat(parties),
+            transactionShape: shape,
+          },
+        },
+      }),
+    );
+    return this.parseUpdateResponseEvents(res.data);
+  }
+
+  private parseActiveContractEntry(item: Record<string, unknown>, interfaceId?: string) {
+    const entry = item.contractEntry as Record<string, unknown> | undefined;
+    const active = (entry?.JsActiveContract ?? entry?.ActiveContract) as Record<string, unknown> | undefined;
+    const created = active?.createdEvent as Record<string, unknown> | undefined;
+    if (!created) return null;
+
+    const payload =
+      (interfaceId ? this.parseInterfaceView(created, interfaceId) : null) ??
+      ((created.createArgument ?? {}) as Record<string, unknown>);
+
+    return {
+      contractId: created.contractId as string,
+      templateId: created.templateId as string,
+      payload,
+      createdEventBlob: (created.createdEventBlob as string) ?? null,
+      synchronizerId: (active?.synchronizerId as string) ?? null,
+    };
+  }
+
+  private parseInterfaceView(
+    created: Record<string, unknown>,
+    interfaceId: string,
+  ): Record<string, unknown> | null {
+    const views = created.interfaceViews;
+    if (!Array.isArray(views)) return null;
+
+    const normalizedTarget = interfaceId.replace(/^#/, "");
+    for (const view of views) {
+      const record = view as Record<string, unknown>;
+      const id = typeof record.interfaceId === "string" ? record.interfaceId : "";
+      if (!id) continue;
+      const normalizedId = id.replace(/^#/, "");
+      if (
+        normalizedId !== normalizedTarget &&
+        !normalizedId.endsWith(normalizedTarget) &&
+        !normalizedTarget.endsWith(normalizedId)
+      ) {
+        continue;
+      }
+      const viewValue = record.viewValue ?? record.view;
+      if (viewValue && typeof viewValue === "object") {
+        return viewValue as Record<string, unknown>;
+      }
+    }
+
+    if (views.length === 1) {
+      const viewValue = (views[0] as Record<string, unknown>).viewValue;
+      if (viewValue && typeof viewValue === "object") {
+        return viewValue as Record<string, unknown>;
+      }
+    }
+    return null;
+  }
+
+  async listInterfaceContracts(interfaceId: string, partyId?: string) {
+    const parties = partyId
+      ? [partyId]
+      : await this.resolveReadParties(await this.resolveParties());
+    const offset = await this.getLedgerEnd();
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/state/active-contracts", {
+        activeAtOffset: offset,
+        eventFormat: interfaceEventFormat(parties, interfaceId),
+      }),
+    );
+
+    const contracts: Array<{
+      contractId: string;
+      templateId: string;
+      payload: Record<string, unknown>;
+      createdEventBlob: string | null;
+      synchronizerId: string | null;
+    }> = [];
+    for (const item of res.data as Array<Record<string, unknown>>) {
+      const contract = this.parseActiveContractEntry(item, interfaceId);
+      if (contract) contracts.push(contract);
+    }
+    return contracts;
+  }
+
+  async listActiveContractsRaw() {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const offset = await this.getLedgerEnd();
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/state/active-contracts", {
+        activeAtOffset: offset,
+        eventFormat: {
+          filtersByParty: Object.fromEntries(
+            parties.map((party) => [
+              party,
+              { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: true } } } }] },
+            ]),
+          ),
+        },
+      }),
+    );
+
+    const contracts: Array<{
+      contractId: string;
+      templateId: string;
+      payload: Record<string, unknown>;
+      createdEventBlob: string | null;
+      synchronizerId: string | null;
+    }> = [];
+    for (const item of res.data as Array<Record<string, unknown>>) {
+      const contract = this.parseActiveContractEntry(item);
+      if (contract) contracts.push(contract);
+    }
+    return contracts;
+  }
+
+  async query(
+    templateId: string,
+    filter?: QueryFilter,
+    opts?: { currentPackageOnly?: boolean },
+  ) {
     const parties = await this.resolveReadParties(await this.resolveParties());
     const offset = await this.getLedgerEnd();
     const contracts = await this.queryActiveContracts(parties, offset);
+    const packageId = opts?.currentPackageOnly ? await this.ensurePackageId() : null;
     return contracts
       .filter((contract) => matchesTemplate(contract.templateId, templateId))
       .filter((contract) => {
+        if (packageId) {
+          const contractPackageId = packageIdFromTemplateId(contract.templateId);
+          if (contractPackageId !== packageId) return false;
+        }
         if (!filter) return true;
         return Object.entries(filter).every(([key, value]) => contract.payload[key] === value);
       })
@@ -305,6 +511,12 @@ export class LedgerClient {
         contractId: contract.contractId,
         payload: contract.payload,
       }));
+  }
+
+  async listActiveContracts() {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const offset = await this.getLedgerEnd();
+    return this.queryActiveContracts(parties, offset);
   }
 
   async fetchById(contractId: string) {
@@ -321,6 +533,126 @@ export class LedgerClient {
       contractId: created.contractId as string,
       payload: (created.createArgument ?? {}) as Record<string, unknown>,
     };
+  }
+
+  async fetchInterfaceById(contractId: string, interfaceId: string) {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() => this.http.post("/v2/events/events-by-contract-id", {
+      contractId,
+      eventFormat: interfaceEventFormat(parties, interfaceId),
+    }));
+
+    const created = res.data.created?.createdEvent as Record<string, unknown> | undefined;
+    if (!created) return null;
+
+    const payload =
+      this.parseInterfaceView(created, interfaceId) ??
+      ((created.createArgument ?? {}) as Record<string, unknown>);
+
+    return {
+      contractId: created.contractId as string,
+      payload,
+    };
+  }
+
+  async fetchContractLifecycle(contractId: string): Promise<{
+    created: { offset: number | null; payload: Record<string, unknown> } | null;
+    archived: { offset: number | null } | null;
+  } | null> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() => this.http.post("/v2/events/events-by-contract-id", {
+      contractId,
+      eventFormat: wildcardEventFormat(parties),
+    }));
+
+    const data = res.data as Record<string, unknown>;
+    const createdBlock = data.created as Record<string, unknown> | undefined;
+    const archivedBlock = data.archived as Record<string, unknown> | undefined;
+    if (!createdBlock && !archivedBlock) return null;
+
+    const createdEvent = createdBlock?.createdEvent as Record<string, unknown> | undefined;
+    const archivedEvent = archivedBlock?.archivedEvent as Record<string, unknown> | undefined;
+
+    return {
+      created: createdEvent
+        ? {
+            offset:
+              parseLedgerOffset(createdEvent.offset) ??
+              parseLedgerOffset(createdBlock?.offset),
+            payload: (createdEvent.createArgument ?? {}) as Record<string, unknown>,
+          }
+        : null,
+      archived: archivedEvent
+        ? {
+            offset:
+              parseLedgerOffset(archivedEvent.offset) ??
+              parseLedgerOffset(archivedBlock?.offset),
+          }
+        : null,
+    };
+  }
+
+  private updateTransactionFormat(parties: string[], transactionShape = "TRANSACTION_SHAPE_ACS_DELTA") {
+    return {
+      includeTransactions: {
+        eventFormat: wildcardEventFormat(parties),
+        transactionShape,
+      },
+    };
+  }
+
+  async fetchTransactionEventsByUpdateId(updateId: string): Promise<Array<Record<string, unknown>>> {
+    const parties = await this.resolveReadParties(await this.resolveParties());
+    const res = await this.withAuthRetry(() =>
+      this.http.post("/v2/updates/update-by-id", {
+        updateId,
+        updateFormat: this.updateTransactionFormat(parties),
+      }),
+    );
+    return this.parseUpdateResponseEvents(res.data);
+  }
+
+  async fetchTransactionEventsAtOffsetWithFallback(offset: number): Promise<{
+    events: Array<Record<string, unknown>>;
+    transactionShapes: string[];
+    errors: string[];
+  }> {
+    const shapes = ["TRANSACTION_SHAPE_ACS_DELTA", "TRANSACTION_SHAPE_LEDGER_EFFECTS"];
+    const errors: string[] = [];
+    const merged: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+
+    const eventKey = (event: Record<string, unknown>): string => {
+      const created = event.CreatedEvent as Record<string, unknown> | undefined;
+      if (typeof created?.contractId === "string") return `created:${created.contractId}`;
+      const archived = event.ArchivedEvent as Record<string, unknown> | undefined;
+      if (typeof archived?.contractId === "string") return `archived:${archived.contractId}`;
+      const exercised = event.ExercisedEvent as Record<string, unknown> | undefined;
+      if (typeof exercised?.contractId === "string") {
+        return `exercised:${exercised.contractId}:${exercised.choice ?? ""}`;
+      }
+      return JSON.stringify(event);
+    };
+
+    for (const shape of shapes) {
+      try {
+        const events = await this.fetchTransactionEventsAtOffset(offset, { transactionShape: shape });
+        if (events.length === 0) {
+          errors.push(`${shape}: empty event list`);
+          continue;
+        }
+        for (const event of events) {
+          const key = eventKey(event);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(event);
+        }
+      } catch (err) {
+        errors.push(`${shape}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return { events: merged, transactionShapes: shapes, errors };
   }
 
   async allocateParty(partyIdHint: string) {
@@ -439,7 +771,7 @@ export class LedgerClient {
       if (disabled) return;
       try {
         if (lastOffset === null) {
-          // Shared devnet ledgers are huge — never replay from offset 0 (nginx returns 413).
+          // Never replay from offset 0 on shared ledgers (nginx 413).
           lastOffset = await this.getLedgerEnd();
         }
 
@@ -528,7 +860,19 @@ export class LedgerClient {
 }
 
 export const partyClient = (token: string, actAsParty: string) => new LedgerClient(token, undefined, actAsParty);
-export const operatorAdminClient = async () =>
-  new LedgerClient(getOperatorLedgerToken, undefined, requireConfiguredOperatorParty());
-export const operatorClient = async () =>
-  new LedgerClient(getOperatorLedgerToken, undefined, requireConfiguredOperatorParty());
+
+let cachedOperatorClient: LedgerClient | null = null;
+
+export async function operatorClient(): Promise<LedgerClient> {
+  if (!cachedOperatorClient) {
+    cachedOperatorClient = new LedgerClient(
+      getOperatorLedgerToken,
+      undefined,
+      requireConfiguredOperatorParty(),
+    );
+  }
+  return cachedOperatorClient;
+}
+
+/** @deprecated alias — same singleton as operatorClient */
+export const operatorAdminClient = operatorClient;

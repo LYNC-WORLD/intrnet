@@ -5,7 +5,6 @@ import Intrnet.FxRateOracle
 import Intrnet.NettingAgreement
 import Intrnet.NettingCycle
 import Intrnet.NetPosition
-import Intrnet.CashAccount
 import Intrnet.Obligation
 import Intrnet.SettlementInstruction
 import qualified Intrnet.SettlementLogic as SettlementLogic
@@ -58,15 +57,6 @@ createAgreement parties =
       fxOracleParty = parties.operator
       agreementDate = date 2025 Jan 1
       agreementId = "AGREEMENT-2025-001"
-
-seedCashAccount : Party -> Party -> Text -> Decimal -> Script (ContractId CashAccount)
-seedCashAccount operator owner currency balance =
-  submit operator do
-    createCmd CashAccount with
-      owner
-      currency
-      balance
-      operator
 
 createObligation : Party -> Party -> Party -> Decimal -> Text -> Script (ContractId Obligation)
 createObligation payer receiver operator amount currency = do
@@ -155,20 +145,10 @@ generateSettlementPairs nets =
   SettlementLogic.generateSettlementPairs $
     map (\n -> (n.party, n.net)) nets
 
-findCashAccountCid : Party -> Party -> Text -> Script (ContractId CashAccount)
-findCashAccountCid querier owner currency = do
-  accts <- query @CashAccount querier
-  let (cid, _) =
-        expectOne "Cash account not found for owner" $
-          filter (\(_, a) -> a.owner == owner && a.currency == currency) accts
-  return cid
-
 executeSettlementsFromNets :
   Party -> Text -> Text -> [(Party, Party, Decimal)] -> Script ()
 executeSettlementsFromNets operator cycleId currency settlements =
   forA_ settlements $ \(payer, receiver, amount) -> do
-    payerAcctCid <- findCashAccountCid operator payer currency
-    receiverAcctCid <- findCashAccountCid operator receiver currency
     instCid <- submit operator do
       createCmd SettlementInstruction with
         payer
@@ -178,10 +158,10 @@ executeSettlementsFromNets operator cycleId currency settlements =
         cycleId
         operator
         status = "PENDING"
+        paymentReference = None
+        failureReason = None
     executedCid <- submit operator do
-      exerciseCmd instCid ExecuteSettlement with
-        payerAcctCid
-        receiverAcctCid
+      exerciseCmd instCid AttestPayment with paymentUpdateId = "test-payment-ref"
     _ <- submit receiver do
       exerciseCmd executedCid ConfirmReceipt
     return ()

@@ -228,8 +228,6 @@ testCloseCycleRequiresConfirmedInstructions = do
   parties <- allocateTestParties
   eurOracleCid <- seedFxOracle parties.operator "EUR" "USD" 1.10
   agreementCid <- createAgreement parties
-  payerAcctCid <- seedCashAccount parties.operator parties.companyA "USD" 2000000.0
-  receiverAcctCid <- seedCashAccount parties.operator parties.companyB "USD" 2000000.0
 
   cycleCid <- submit parties.operator do
     exerciseCmd agreementCid StartNettingCycle with
@@ -279,9 +277,7 @@ testCloseCycleRequiresConfirmedInstructions = do
       settlementInstructionCids = [instructionCid]
 
   executedCid <- submit parties.operator do
-    exerciseCmd instructionCid ExecuteSettlement with
-      payerAcctCid
-      receiverAcctCid
+    exerciseCmd instructionCid AttestPayment with paymentUpdateId = "cycle-close-payment"
   confirmedCid <- submit parties.companyB do
     exerciseCmd executedCid ConfirmReceipt
   Some confirmed <- queryContractId parties.companyB confirmedCid

@@ -1,4 +1,3 @@
-/** OpenAPI 3.0 document for the Intrnet REST API. Served at /api/docs */
 import { openApiComponents, routeResponseSchemas } from "./schemas";
 
 const json = (schema: object) => ({
@@ -29,7 +28,6 @@ export const openApiSpec = {
     { name: "Cycles" },
     { name: "Positions" },
     { name: "Settlement" },
-    { name: "Operator" },
     { name: "Health" },
   ],
   components: openApiComponents,
@@ -123,10 +121,12 @@ export const openApiSpec = {
             schema: { type: "string" },
             description: "Optional filter by agreement",
           },
+          { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
         ],
         responses: {
           "200": {
-            description: "Active participant companies",
+            description: "Paginated active participant companies",
             content: json(routeResponseSchemas.companyList),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -231,6 +231,126 @@ export const openApiSpec = {
             content: json(routeResponseSchemas.rejectOnboarding),
           },
           "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/api/admin/deposits/sync": {
+      post: {
+        tags: ["Admin"],
+        summary: "Accept pending tUSD transfers and reconcile custody deposits (operator)",
+        description:
+          "Accepts pending CIP-56 TransferInstruction contracts addressed to the operator custody party, " +
+          "then scans custody tUSD holdings and idempotently credits holdings whose transfer reference " +
+          "is a depositor party id (Canton Registry Offer Transfer Reference field).",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": { description: "Reconciliation report", content: json({ type: "object" }) },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/api/admin/balances/credit": {
+      post: {
+        tags: ["Admin"],
+        summary: "Manually credit a participant tUSD balance (operator)",
+        description:
+          "Credits an ACTIVE participant's internal settlement balance when automatic deposit attribution fails. " +
+          "Use holdingContractId from sync unattributed list for idempotent DEPOSIT credits, or referenceId for a standalone MANUAL_CREDIT.",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: json({ $ref: "#/components/schemas/ManualBalanceCreditRequest" }),
+        },
+        responses: {
+          "200": {
+            description: "Balance credited (or already applied)",
+            content: json(routeResponseSchemas.partyBalance),
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
+    "/api/admin/instruments": {
+      get: {
+        tags: ["Admin"],
+        summary: "Discover tUSD registry instruments + admin party (operator)",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": { description: "Registry instruments and discovered admin", content: json({ type: "object" }) },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/api/admin/dashboard": {
+      get: {
+        tags: ["Admin"],
+        summary: "Admin dashboard summary and recent activity",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", default: 10, minimum: 1, maximum: 50 },
+            description: "Max recent activity items",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Dashboard summary cards and recent activity",
+            content: json({
+              type: "object",
+              properties: {
+                success: { type: "boolean" },
+                data: {
+                  type: "object",
+                  properties: {
+                    summary: {
+                      type: "object",
+                      properties: {
+                        totalUsers: { type: "integer" },
+                        whitelistRequests: { type: "integer" },
+                        cycles: { type: "integer" },
+                        totalAgreements: { type: "integer" },
+                        obligations: { type: "integer" },
+                      },
+                      required: [
+                        "totalUsers",
+                        "whitelistRequests",
+                        "cycles",
+                        "totalAgreements",
+                        "obligations",
+                      ],
+                    },
+                    recentActivity: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          kind: { type: "string", enum: ["ledger", "whitelist"] },
+                          title: { type: "string" },
+                          description: { type: "string" },
+                          status: { type: "string" },
+                          timestamp: { type: "string", format: "date-time" },
+                        },
+                      },
+                    },
+                    updatedAt: { type: "string", format: "date-time" },
+                  },
+                },
+              },
+            }),
+          },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "403": { $ref: "#/components/responses/Forbidden" },
         },
@@ -448,6 +568,14 @@ export const openApiSpec = {
           },
           { name: "currency", in: "query", required: false, schema: { type: "string" } },
           { name: "agreementId", in: "query", required: false, schema: { type: "string" } },
+          {
+            name: "cycleId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description:
+              "Stable cycleId or cycle contract id. Returns only obligations in that cycle where the caller is payer or receiver.",
+          },
           { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
           { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
         ],
@@ -545,10 +673,12 @@ export const openApiSpec = {
             schema: { type: "string" },
             description: "Optional; participants are scoped to their agreement",
           },
+          { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
         ],
         responses: {
           "200": {
-            description: "Netting cycles",
+            description: "Paginated netting cycles",
             content: json({ $ref: "#/components/schemas/CycleListResponse" }),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
@@ -757,29 +887,90 @@ export const openApiSpec = {
         },
       },
     },
-    "/api/settlement/accounts": {
+    "/api/settlement/balance": {
       get: {
         tags: ["Settlement"],
-        summary: "List cash accounts",
+        summary: "Get tUSD settlement balance for current party",
         security: [{ bearerAuth: [] }],
         responses: {
           "200": {
-            description: "Cash accounts visible to the user",
-            content: json(routeResponseSchemas.cashAccountList),
+            description: "Party bookkeeping balance plus on-chain holdingsTotal",
+            content: json(routeResponseSchemas.partyBalance),
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/api/settlement/balances": {
+      get: {
+        tags: ["Settlement"],
+        summary: "List tUSD settlement balances",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": {
+            description:
+              "Balances visible to the user (operator sees all parties with on-chain holdingsTotal)",
+            content: json(routeResponseSchemas.partyBalanceList),
+          },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/api/settlement/faucet": {
+      post: {
+        tags: ["Settlement"],
+        summary: "Claim faucet tUSD into in-app available balance",
+        description:
+          "Credits FAUCET_AMOUNT (default 1000) to the caller's in-app available balance from the " +
+          "pre-funded operator custody pool. One claim per party per UTC calendar day. " +
+          "Also ensures a Utility TransferPreapproval for SETTLEMENT_INSTRUMENT_ID (faucet fails if that fails).",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "Faucet credited",
+            content: json({ $ref: "#/components/schemas/FaucetClaimResponse" }),
+          },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "409": { $ref: "#/components/responses/Conflict" },
         },
       },
     },
     "/api/settlement/{contractId}/execute": {
       post: {
         tags: ["Settlement"],
-        summary: "Execute settlement instruction (operator)",
+        summary: "Execute settlement with automatic CIP-56 custody payout (operator)",
+        description:
+          "Reserves the payer balance, transfers real settlement tokens from operator custody to the " +
+          "receiver via the CIP-56 TransferFactory, attests the Canton updateId on the settlement " +
+          "instruction, and debits the payer's reserved balance.",
         security: [{ bearerAuth: [] }],
         parameters: [{ name: "contractId", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": {
-            description: "Funds transferred on ledger",
+            description: "Real token payout completed and settlement attested on ledger",
+            content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+    },
+    "/api/settlement/{contractId}/fail": {
+      post: {
+        tags: ["Settlement"],
+        summary: "Mark a PENDING settlement instruction as FAILED (operator)",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "contractId", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: false,
+          content: json({ $ref: "#/components/schemas/FailSettlementRequest" }),
+        },
+        responses: {
+          "200": {
+            description: "Instruction marked FAILED; reserved funds released",
             content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
           },
           "400": { $ref: "#/components/responses/BadRequest" },
@@ -804,28 +995,6 @@ export const openApiSpec = {
           "403": { $ref: "#/components/responses/Forbidden" },
           "404": { $ref: "#/components/responses/NotFound" },
           "401": { $ref: "#/components/responses/Unauthorized" },
-        },
-      },
-    },
-    "/api/operator/fund-account": {
-      post: {
-        tags: ["Operator"],
-        summary: "Fund a participant cash account (operator)",
-        security: [{ bearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: json({ $ref: "#/components/schemas/FundAccountRequest" }),
-        },
-        responses: {
-          "200": {
-            description: "Account credited",
-            content: json({ $ref: "#/components/schemas/LedgerExerciseResponse" }),
-          },
-          "400": { $ref: "#/components/responses/BadRequest" },
-          "404": { $ref: "#/components/responses/NotFound" },
-          "409": { $ref: "#/components/responses/Conflict" },
-          "401": { $ref: "#/components/responses/Unauthorized" },
-          "403": { $ref: "#/components/responses/Forbidden" },
         },
       },
     },

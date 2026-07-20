@@ -27,17 +27,20 @@ model User {
 }
 
 model OnboardingRequest {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  companyName String
-  contactName String?
-  phone       String?
-  country     String?
-  partyHint   String?
-  state       String   @default("DRAFT")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName      String
+  contactName      String?
+  phone            String?
+  country          String?
+  partyHint        String?
+  state            String    @default("DRAFT")
+  rejectedBy       String?
+  rejectionReason  String?
+  rejectedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([state])
 }
@@ -77,4 +80,34 @@ model FxRateHistory {
 
   @@index([fromCurrency, toCurrency])
   @@index([asOf])
+}
+
+model PartyBalance {
+  id        String   @id @default(cuid())
+  partyId   String   @unique
+  available Decimal  @default(0) @db.Decimal(20, 8)
+  reserved  Decimal  @default(0) @db.Decimal(20, 8)
+  currency  String   @default("tUSD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BalanceLedgerEntry {
+  id             String   @id @default(cuid())
+  partyId        String
+  entryType      String
+  amount         Decimal  @db.Decimal(20, 8)
+  currency       String   @default("tUSD")
+  referenceType  String?
+  referenceId    String?
+  instructionCid String?
+  createdBy      String?
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@unique([referenceType, referenceId])
+  @@unique([instructionCid, entryType])
+  @@index([partyId])
+  @@index([instructionCid])
+  @@index([createdAt])
 }

@@ -5,11 +5,15 @@ import { authenticateOAuth, requireOperator } from "../middleware/auth";
 const router = Router();
 
 router.get("/companies", authenticateOAuth, requireOperator, adminController.listCompanies);
+router.get("/dashboard", authenticateOAuth, requireOperator, adminController.dashboard);
 router.get("/parties", authenticateOAuth, requireOperator, adminController.listParties);
 router.get("/onboarding/requests", authenticateOAuth, requireOperator, adminController.listOnboardingRequests);
 router.get("/onboarding/requests/:id", authenticateOAuth, requireOperator, adminController.getOnboardingRequest);
 router.post("/onboarding/requests/:id/approve", authenticateOAuth, requireOperator, adminController.approveOnboardingRequest);
 router.post("/onboarding/requests/:id/reject", authenticateOAuth, requireOperator, adminController.rejectOnboarding);
+router.post("/deposits/sync", authenticateOAuth, requireOperator, adminController.syncDeposits);
+router.post("/balances/credit", authenticateOAuth, requireOperator, adminController.creditPartyBalance);
+router.get("/instruments", authenticateOAuth, requireOperator, adminController.listInstruments);
 router.get("/pqs/health", authenticateOAuth, requireOperator, adminController.pqsHealth);
 
 export default router;
