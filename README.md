@@ -220,7 +220,7 @@ netClear/
 ├── frontend/         React participant + operator UI
 └── intrnet-daml/     Daml contracts, scripts, tests
 ```
-
+Devnet ledger explorer: [link](https://lighthouse.devnet.cantonloop.com/party/lync-wallet%3A%3A12207f6cd9b3f81672103b40534d727295e916011af1b8ba84bf4fdb805f1ee522b0/transactions)
 ## License
 
 Built for Canton hackathon by LYNC.
