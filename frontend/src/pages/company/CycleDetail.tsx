@@ -41,7 +41,6 @@ export default function CycleDetail() {
   );
   const { data: obligationsData, isLoading: loadingObligations } =
     useObligations({
-      status: "NETTED",
       cycleId,
     });
   const { data: instructionsData, isLoading: loadingInstructions } =
