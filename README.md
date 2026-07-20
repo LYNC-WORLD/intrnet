@@ -1,6 +1,6 @@
 # Intrnet — Multilateral Netting & Settlement on Canton
 
-Intrnet is a multi-company netting and settlement platform on [Canton Network](https://www.canton.network/). Counterparties create obligations, run netting cycles, and settle net positions with CIP-56 settlement tokens from operator custody — with on-ledger privacy and workflow gates.
+Intrnet is a inter company, cross currency netting and settlement platform on [Canton Network](https://www.canton.network/). Counterparties create obligations, run netting cycles, and settle net positions with CIP-56 settlement tokens from operator custody — with on-ledger privacy and workflow gates.
 
 On **devnet**, settlement uses **tUSD** (a mock USD instrument you register on Utility) and a **faucet** for in-app credits plus TransferPreapproval setup. **Production** would use a real settlement asset (e.g. tokenized USD) and real funding via bank rails or on-chain deposits — not the faucet.
 
