@@ -1,10 +1,12 @@
 import {
   useMe,
-  useSettlementAccounts,
   useSettlementInstructions,
   useFxRates,
+  useSettlementBalance,
+  useClaimFaucet,
 } from "../../hooks/queries";
-import { CashAccount, SettlementInstruction, FxRate } from "../../types";
+import { Copy, Droplet } from "lucide-react";
+import { SettlementInstruction, FxRate } from "../../types";
 import {
   Card,
   CardHeader,
@@ -15,36 +17,64 @@ import {
   Tr,
   PageLoader,
   EmptyState,
+  Button,
 } from "../../components/ui";
 import { fmt } from "../../utils";
+import toast from "react-hot-toast";
+import { Link } from "react-router-dom";
 
 export default function Account() {
   const { data: profile, isLoading: loadingMe } = useMe();
-  const { data: accountsData, isLoading: loadingAccounts } =
-    useSettlementAccounts();
+  const { data: account, isLoading: loadingBalance } = useSettlementBalance();
+  const faucetMutation = useClaimFaucet();
+
   const { data: historyData, isLoading: loadingHistory } =
     useSettlementInstructions({ status: "CONFIRMED" });
   const { data: ratesData, isLoading: loadingRates } = useFxRates();
-
-  const accounts: CashAccount[] = accountsData ?? [];
-  const account =
-    accounts.find((a) => a.currency === "USD") ?? accounts[0] ?? null;
 
   const history: SettlementInstruction[] =
     historyData?.instructions ?? historyData ?? [];
   const rates: FxRate[] = ratesData ?? [];
 
-  const loading =
-    loadingMe || loadingAccounts || loadingHistory || loadingRates;
+  const loading = loadingMe || loadingBalance || loadingHistory || loadingRates;
 
   if (loading) return <PageLoader />;
 
   const txRows = history.map((h) => {
-    // isCredit means money came TO us — compare against our own partyId,
-    // since the API doesn't return receiverName/payerName fields.
     const isCredit = h.receiver === profile?.partyId;
     return { ...h, isCredit };
   });
+
+  const handleClaimFaucet = () => {
+    faucetMutation.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data.alreadyApplied) {
+          toast.error(
+            "You've already claimed the faucet today. Try again tomorrow.",
+          );
+        } else {
+          toast.success(
+            `Claimed ${fmt.currency(data.amount, data.currency)} to your balance`,
+          );
+        }
+      },
+      onError: (err: unknown) => {
+        const status = (err as { response?: { status?: number } })?.response
+          ?.status;
+        const message = (err as { response?: { data?: { error?: string } } })
+          ?.response?.data?.error;
+        if (status === 409) {
+          toast.error(message ?? "You've already claimed the faucet today.");
+        } else if (status === 403) {
+          toast.error(
+            message ?? "Your account can't claim the faucet right now.",
+          );
+        } else {
+          toast.error(message ?? "Failed to claim faucet. Please try again.");
+        }
+      },
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -61,7 +91,7 @@ export default function Account() {
               label="Canton party ID"
               value={profile?.partyId ?? "—"}
               mono
-              copyable
+              copyable={true}
             />
             <Row
               label="Agreement ID"
@@ -72,12 +102,28 @@ export default function Account() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <h2 className="font-semibold text-bone-100">Cash Balance</h2>
+          <CardHeader className="!py-3 !px-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-bone-100">Cash Balance</h2>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleClaimFaucet}
+                loading={faucetMutation.isPending}
+              >
+                <Droplet size={14} />
+                Claim funds
+              </Button>
+            </div>
           </CardHeader>
           <CardBody>
             <p className="text-3xl font-bold text-bone-100">
-              {account ? fmt.currency(account.balance, account.currency) : "—"}
+              {account
+                ? fmt.currency(
+                    account.total + account.holdingsTotal,
+                    account.currency,
+                  )
+                : "—"}
             </p>
             <p className="text-xs text-bone-700 mt-1">
               On-ledger settlement account
@@ -130,7 +176,14 @@ export default function Account() {
                         ? t.payer.split("::")[0]
                         : t.receiver.split("::")[0]}
                     </Td>
-                    <Td>{t.cycleId}</Td>
+                    <Td>
+                      <Link
+                        to={`/cycles/${t.cycleId}`}
+                        className="text-sm text-bone-500 hover:text-lime-400 hover:underline"
+                      >
+                        {t.cycleId}
+                      </Link>
+                    </Td>
                   </Tr>
                 ))}
               </tbody>
@@ -201,22 +254,30 @@ function Row({
   mono?: boolean;
   copyable?: boolean;
 }) {
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    toast.success("Copied to clipboard");
+  };
+
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-bone-500">{label}</span>
-      <span
-        className={`text-sm text-bone-100 ${mono ? "font-mono" : "font-medium"} truncate max-w-[180px]`}
-      >
-        {value}
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-bone-500 shrink-0">{label}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span
+          className={`text-sm text-bone-100 ${mono ? "font-mono" : "font-medium"} truncate max-w-[140px]`}
+        >
+          {value}
+        </span>
         {copyable && value !== "—" && (
           <button
-            onClick={() => navigator.clipboard.writeText(value)}
-            className="ml-2 text-bone-700 hover:text-lime-400"
+            onClick={handleCopy}
+            className="shrink-0 text-bone-700 hover:text-lime-400 transition-colors"
+            title="Copy to clipboard"
           >
-            ⧉
+            <Copy size={13} />
           </button>
         )}
-      </span>
+      </div>
     </div>
   );
 }

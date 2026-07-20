@@ -32,21 +32,27 @@ export default function CycleDetail() {
   const { cycleId } = useParams<{ cycleId: string }>();
   const { user } = useAuth();
 
-  const { data: cyclesData, isLoading: loadingCycles } = useCycles();
+  const { data: cyclesData, isLoading: loadingCycles } = useCycles({
+    page: 1,
+    limit: 100,
+  });
   const { data: positionsData, isLoading: loadingPositions } = usePositions(
     cycleId ? { cycleId } : undefined,
   );
   const { data: obligationsData, isLoading: loadingObligations } =
-    useObligations({ status: "NETTED" });
+    useObligations({
+      cycleId,
+    });
   const { data: instructionsData, isLoading: loadingInstructions } =
     useSettlementInstructions();
   const ackMutation = useAcknowledgePosition();
 
-  const cycles: NettingCycle[] = cyclesData ?? [];
+  const cycles: NettingCycle[] = cyclesData?.cycles ?? [];
   const cycle = cycles.find((x) => x.cycleId === cycleId) ?? null;
 
-  const allPositions: NetPosition[] =
-    positionsData?.positions ?? positionsData ?? [];
+  const allPositions: NetPosition[] = Array.isArray(positionsData)
+    ? positionsData
+    : (positionsData?.positions ?? []);
   const position =
     allPositions.find((x) => x.cycleId === cycleId) ?? allPositions[0] ?? null;
 

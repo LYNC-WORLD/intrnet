@@ -2,11 +2,11 @@ import { useState } from "react";
 import toast from "react-hot-toast";
 import {
   useSettlementInstructions,
-  useSettlementAccounts,
+  useSettlementBalance,
   useExecuteSettlement,
   useConfirmSettlement,
 } from "../../hooks/queries";
-import { SettlementInstruction, CashAccount } from "../../types";
+import { SettlementInstruction } from "../../types";
 import {
   Card,
   CardBody,
@@ -23,8 +23,9 @@ import {
 } from "../../components/ui";
 import { fmt } from "../../utils";
 import { useAuth } from "@/context/AuthContext";
+import { Link } from "react-router-dom";
 
-const LOW_BALANCE_THRESHOLD = Number(50000);
+const LOW_BALANCE_THRESHOLD = Number(50);
 
 const TABS = [
   { key: "pay", label: "I Need to Pay" },
@@ -39,13 +40,12 @@ export default function Settlement() {
     useState<SettlementInstruction | null>(null);
 
   const { data: instructionsData, isLoading } = useSettlementInstructions();
-  const { data: accountsData } = useSettlementAccounts();
+  const { data: balance } = useSettlementBalance();
   const executeMutation = useExecuteSettlement();
   const confirmMutation = useConfirmSettlement();
 
   const instructions: SettlementInstruction[] =
     instructionsData?.instructions ?? instructionsData ?? [];
-  const accounts: CashAccount[] = accountsData ?? [];
 
   const filtered = instructions.filter((i) => {
     if (tab === "pay") return i.payer === user?.partyId;
@@ -81,14 +81,9 @@ export default function Settlement() {
     });
   };
 
-  const balance = modalInstruction
-    ? (accounts.find((a) => a.currency === modalInstruction.currency) ??
-      accounts[0] ??
-      null)
-    : null;
   const balanceAfter =
     balance && modalInstruction
-      ? balance.balance - modalInstruction.amount
+      ? balance.total + balance.holdingsTotal - modalInstruction.amount
       : null;
   const isLow = balanceAfter !== null && balanceAfter < LOW_BALANCE_THRESHOLD;
 
@@ -176,6 +171,13 @@ export default function Settlement() {
                               Confirm Receipt
                             </Button>
                           )}
+                        {i.status === "CONFIRMED" && (
+                          <Link to={`/cycles/${i.cycleId}`}>
+                            <Button size="sm" variant="secondary">
+                              View
+                            </Button>
+                          </Link>
+                        )}
                       </Td>
                     </Tr>
                   );
@@ -241,7 +243,10 @@ export default function Settlement() {
                 <span className="text-bone-500">Current balance</span>
                 <span className="font-medium text-bone-100">
                   {balance
-                    ? fmt.currency(balance.balance, balance.currency)
+                    ? fmt.currency(
+                        balance.total + balance.holdingsTotal,
+                        balance.currency,
+                      )
                     : "—"}
                 </span>
               </div>

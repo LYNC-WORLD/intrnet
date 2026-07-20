@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useCycles, usePositions } from "../../hooks/queries";
 import { NettingCycle, NetPosition } from "../../types";
@@ -16,13 +17,28 @@ import {
 } from "../../components/ui";
 import { fmt } from "../../utils";
 
+const LIMIT = 10;
+
 export default function Cycles() {
-  const { data: cyclesData, isLoading: loadingCycles } = useCycles();
+  const [page, setPage] = useState(1);
+
+  const { data: cyclesData, isLoading: loadingCycles } = useCycles({
+    page,
+    limit: LIMIT,
+  });
   const { data: positionsData, isLoading: loadingPositions } = usePositions();
 
-  const cycles: NettingCycle[] = cyclesData ?? [];
-  const allPositions: NetPosition[] =
-    positionsData?.positions ?? positionsData ?? [];
+  const cycles: NettingCycle[] = (cyclesData?.cycles ?? [])
+    .slice()
+    .sort(
+      (a: NettingCycle, b: NettingCycle) =>
+        new Date(b.cutoffTime).getTime() - new Date(a.cutoffTime).getTime(),
+    );
+  const total: number = cyclesData?.total ?? cycles.length;
+
+  const allPositions: NetPosition[] = Array.isArray(positionsData)
+    ? positionsData
+    : (positionsData?.positions ?? []);
 
   const positions: Record<string, NetPosition> = {};
   allPositions.forEach((pos) => {
@@ -110,6 +126,30 @@ export default function Cycles() {
           )}
         </CardBody>
       </Card>
+
+      {total > LIMIT && (
+        <div className="flex justify-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={page === 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="px-3 py-1.5 text-sm text-bone-500">
+            Page {page} of {Math.ceil(total / LIMIT)}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={page >= Math.ceil(total / LIMIT)}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

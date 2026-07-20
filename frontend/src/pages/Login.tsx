@@ -22,7 +22,7 @@ export default function Login() {
         <div className="flex items-center gap-2.5">
           <CantonMark size={26} />
           <span className="text-xl font-semibold text-bone-100 font-display tracking-tight">
-            NetClear
+            Intrnet
           </span>
         </div>
 
@@ -73,7 +73,7 @@ export default function Login() {
           <div className="lg:hidden flex items-center gap-2.5 justify-center mb-8">
             <CantonMark size={24} />
             <span className="text-xl font-semibold text-bone-100 font-display">
-              NetClear
+              Intrnet
             </span>
           </div>
 

@@ -51,7 +51,13 @@ export const authApi = {
   }) => api.post("/api/auth/register", body),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post("/api/auth/change-password", { currentPassword, newPassword }),
-  me: () => api.get("/api/auth/me"),
+  me: (auth0Token?: string) =>
+    api.get(
+      "/api/auth/me",
+      auth0Token
+        ? { headers: { Authorization: `Bearer ${auth0Token}` } }
+        : undefined,
+    ),
   /** Exchange an Auth0 access token for our own backend session token. */
   oauthLogin: (auth0Token: string) =>
     api.post("/api/auth/oauth/login", { token: auth0Token }),
@@ -109,7 +115,8 @@ export const fxApi = {
 
 // ─── Cycles ──────────────────────────────────────────────────────────────────
 export const cyclesApi = {
-  list: () => api.get("/api/cycles"),
+  list: (params?: { page?: number; limit?: number }) =>
+    api.get("/api/cycles", { params }),
   create: (body: {
     cycleId: string;
     cutoffTime: string;
@@ -139,8 +146,7 @@ export const settlementApi = {
     api.get("/api/settlement/instructions", { params }),
   execute: (cid: string) =>
     api.post(`/api/settlement/instructions/${cid}/execute`, {}),
-  confirm: (cid: string) =>
-    api.post(`/api/settlement/${cid}/confirm`, {}),
-  accounts: (params?: Record<string, string>) =>
-    api.get("/api/settlement/accounts", { params }),
+  confirm: (cid: string) => api.post(`/api/settlement/${cid}/confirm`, {}),
+  balance: () => api.get("/api/settlement/balance"),
+  faucet: () => api.post("/api/settlement/faucet", {}),
 };

@@ -20,7 +20,7 @@ export const QK = {
   participants: () => ["participants"],
   agreement: (agreementId?: string) => ["agreement", agreementId],
   fxRates: () => ["fx-rates"],
-  cycles: () => ["cycles"],
+  cycles: (params?: { page?: number; limit?: number }) => ["cycles", params],
   positions: (params?: Record<string, string>) => ["positions", params],
   instructions: (params?: Record<string, string>) => ["instructions", params],
   accounts: (params?: Record<string, string>) => ["accounts", params],
@@ -130,11 +130,11 @@ export function useFxRates() {
 }
 
 // ─── Cycles ──────────────────────────────────────────────────────────────────
-export function useCycles() {
+export function useCycles(params?: { page?: number; limit?: number }) {
   const { isAuthenticated } = useAuth();
   return useQuery({
-    queryKey: QK.cycles(),
-    queryFn: () => cyclesApi.list().then((r) => r.data),
+    queryKey: QK.cycles(params),
+    queryFn: () => cyclesApi.list(params).then((r) => r.data),
     enabled: isAuthenticated,
     staleTime: POLL_INTERVAL,
     refetchInterval: POLL_INTERVAL,
@@ -176,11 +176,11 @@ export function useSettlementInstructions(params?: Record<string, string>) {
   });
 }
 
-export function useSettlementAccounts(params?: Record<string, string>) {
+export function useSettlementBalance() {
   const { isAuthenticated } = useAuth();
   return useQuery({
-    queryKey: QK.accounts(params),
-    queryFn: () => settlementApi.accounts(params).then((r) => r.data),
+    queryKey: ["balance"],
+    queryFn: () => settlementApi.balance().then((r) => r.data),
     enabled: isAuthenticated,
     staleTime: POLL_INTERVAL,
     refetchInterval: POLL_INTERVAL,
@@ -203,6 +203,16 @@ export function useConfirmSettlement() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["instructions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+}
+
+export function useClaimFaucet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => settlementApi.faucet().then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["balance"] });
     },
   });
 }

@@ -4,7 +4,7 @@
 
 @layer base {
   * {
-    border-color: theme('colors.ink.500');
+    border-color: theme("colors.ink.500");
   }
   html {
     color-scheme: dark;
@@ -12,16 +12,19 @@
   body {
     @apply bg-ink-900 text-bone-100 font-sans antialiased;
   }
-  h1, h2, h3, h4 {
+  h1,
+  h2,
+  h3,
+  h4 {
     @apply font-display;
     letter-spacing: -0.01em;
   }
   ::selection {
-    background: theme('colors.lime.500');
-    color: theme('colors.ink.900');
+    background: theme("colors.lime.500");
+    color: theme("colors.ink.900");
   }
   :focus-visible {
-    outline: 2px solid theme('colors.lime.500');
+    outline: 2px solid theme("colors.lime.500");
     outline-offset: 2px;
   }
 }
@@ -41,7 +44,7 @@
     height: 6px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: theme('colors.ink.500');
+    background: theme("colors.ink.500");
     border-radius: 999px;
   }
   .scrollbar-thin::-webkit-scrollbar-track {
@@ -58,11 +61,15 @@
 
   /* radial lime glow used behind hero/auth panels */
   .bg-lime-glow {
-    background: radial-gradient(circle at 50% 0%, rgba(228, 249, 94, 0.12), transparent 60%);
+    background: radial-gradient(
+      circle at 50% 0%,
+      rgba(228, 249, 94, 0.12),
+      transparent 60%
+    );
   }
 
   .text-gradient-lime {
-    background: linear-gradient(90deg, #EEFB8C, #E4F95E);
+    background: linear-gradient(90deg, #eefb8c, #e4f95e);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;

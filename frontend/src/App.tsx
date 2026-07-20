@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import {
   RequireAuth,
@@ -22,6 +22,7 @@ import Settlement from "./pages/company/Settlement";
 import Account from "./pages/company/Account";
 
 import Callback from "./pages/Callback";
+import { useEffect } from "react";
 
 /**
  * Mounted once, above the router's <Routes>, so the Auth0 -> backend token
@@ -33,10 +34,19 @@ function AuthBridgeMount() {
   return null;
 }
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, [pathname]);
+  return null;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <AuthBridgeMount />
+      <ScrollToTop />
       <Routes>
         {/* Public */}
         <Route
