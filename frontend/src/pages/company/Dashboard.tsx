@@ -48,7 +48,10 @@ export default function Dashboard() {
   const allPositions: NetPosition[] = Array.isArray(positionsData)
     ? positionsData
     : (positionsData?.positions ?? []);
-  const totalNetPosition = allPositions.reduce(
+  const acknowledgedPositions = allPositions.filter(
+    (p) => p.status === "PENDING",
+  );
+  const totalNetPosition = acknowledgedPositions.reduce(
     (sum, p) => sum + p.netAmountSettlement,
     0,
   );
