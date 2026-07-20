@@ -83,7 +83,7 @@ export default function Settlement() {
 
   const balanceAfter =
     balance && modalInstruction
-      ? balance.total - modalInstruction.amount
+      ? balance.total + balance.holdingsTotal - modalInstruction.amount
       : null;
   const isLow = balanceAfter !== null && balanceAfter < LOW_BALANCE_THRESHOLD;
 
@@ -243,7 +243,10 @@ export default function Settlement() {
                 <span className="text-bone-500">Current balance</span>
                 <span className="font-medium text-bone-100">
                   {balance
-                    ? fmt.currency(balance.total, balance.currency)
+                    ? fmt.currency(
+                        balance.total + balance.holdingsTotal,
+                        balance.currency,
+                      )
                     : "—"}
                 </span>
               </div>

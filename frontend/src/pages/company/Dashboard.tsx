@@ -137,7 +137,14 @@ export default function Dashboard() {
         />
         <KpiCard
           label="Cash Balance"
-          value={balance ? fmt.currency(balance.total, balance.currency) : "—"}
+          value={
+            balance
+              ? fmt.currency(
+                  balance.total + balance.holdingsTotal,
+                  balance.currency,
+                )
+              : "—"
+          }
           sub="On-ledger account"
         />
       </div>

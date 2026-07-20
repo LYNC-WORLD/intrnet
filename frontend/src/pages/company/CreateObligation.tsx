@@ -58,7 +58,9 @@ export default function CreateObligation() {
       : null;
 
   const exceedsBalance =
-    balance != null && estimatedUsd != null && estimatedUsd > balance.total;
+    balance != null &&
+    estimatedUsd != null &&
+    estimatedUsd > balance.total + balance.holdingsTotal;
 
   const valid =
     form.receiver &&
@@ -199,7 +201,10 @@ export default function CreateObligation() {
                   <>
                     {" "}
                     · Available balance:{" "}
-                    {fmt.currency(balance.total, balance.currency)}
+                    {fmt.currency(
+                      balance.total + balance.holdingsTotal,
+                      balance.currency,
+                    )}
                   </>
                 )}
               </p>
@@ -209,7 +214,11 @@ export default function CreateObligation() {
               <Alert type="error">
                 <strong>Insufficient balance.</strong> This obligation exceeds
                 your available balance of{" "}
-                {fmt.currency(balance!.total, balance!.currency)}.
+                {fmt.currency(
+                  balance!.total + balance!.holdingsTotal,
+                  balance!.currency,
+                )}
+                .
               </Alert>
             )}
 

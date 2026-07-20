@@ -118,7 +118,12 @@ export default function Account() {
           </CardHeader>
           <CardBody>
             <p className="text-3xl font-bold text-bone-100">
-              {account ? fmt.currency(account.total, account.currency) : "—"}
+              {account
+                ? fmt.currency(
+                    account.total + account.holdingsTotal,
+                    account.currency,
+                  )
+                : "—"}
             </p>
             <p className="text-xs text-bone-700 mt-1">
               On-ledger settlement account
